@@ -1,64 +1,61 @@
-import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { User } from '../models/User';
+import type { RequestHandler, Response } from 'express';
+import { User, type IUser } from '../models/User';
+import type { AuthenticatedRequest } from '../types/auth.types';
+import { generateAuthToken, toSafeUser } from '../utils/auth.util';
+import { asyncHandler } from '../utils/asyncHandler.util';
+import { validateLoginInput, validateRegisterInput } from '../utils/validation.util';
 
-const generateToken = (id: string) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'secret', {
-    expiresIn: '30d',
+const sendAuthResponse = (res: Response, statusCode: number, user: IUser) => {
+  res.status(statusCode).json({
+    user: toSafeUser(user),
+    token: generateAuthToken(user),
   });
 };
 
-export const registerUser = async (req: Request, res: Response) => {
-  const { name, email, password, role } = req.body;
+export const registerUser: RequestHandler = asyncHandler(async (req, res) => {
+  const validation = validateRegisterInput(req.body);
 
-  try {
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      res.status(400).json({ message: 'User already exists' });
-      return;
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
-
-    const user = await User.create({
-      name,
-      email,
-      passwordHash,
-      role: role || 'patient',
-    });
-
-    res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      token: generateToken(user._id as string),
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+  if (!validation.data) {
+    res.status(400).json({ message: 'Validation failed', errors: validation.errors });
+    return;
   }
-};
 
-export const loginUser = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  const existingUser = await User.exists({ email: validation.data.email });
 
-  try {
-    const user = await User.findOne({ email });
-
-    if (user && (await bcrypt.compare(password, user.passwordHash))) {
-      res.json({
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        token: generateToken(user._id as string),
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid email or password' });
-    }
-  } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+  if (existingUser) {
+    res.status(409).json({ message: 'A user with this email already exists' });
+    return;
   }
+
+  const user = await User.create(validation.data);
+  sendAuthResponse(res, 201, user);
+});
+
+export const loginUser: RequestHandler = asyncHandler(async (req, res) => {
+  const validation = validateLoginInput(req.body);
+
+  if (!validation.data) {
+    res.status(400).json({ message: 'Validation failed', errors: validation.errors });
+    return;
+  }
+
+  const user = await User.findOne({ email: validation.data.email }).select('+password');
+
+  if (!user || !(await user.comparePassword(validation.data.password))) {
+    res.status(401).json({ message: 'Invalid email or password' });
+    return;
+  }
+
+  sendAuthResponse(res, 200, user);
+});
+
+export const getCurrentUser: RequestHandler = (req, res) => {
+  const authRequest = req as AuthenticatedRequest;
+
+  if (!authRequest.user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  res.json({ user: authRequest.user });
 };

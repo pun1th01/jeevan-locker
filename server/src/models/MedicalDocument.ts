@@ -4,8 +4,8 @@ export interface IMedicalDocument extends Document {
   patientId: mongoose.Types.ObjectId;
   uploadedBy: mongoose.Types.ObjectId;
   title: string;
-  fileUrl: string; // Could be local path or IPFS hash
-  fileHash: string; // Represents on-chain verification hash
+  fileUrl: string;
+  fileHash: string;
   tags: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -17,7 +17,7 @@ const documentSchema = new Schema<IMedicalDocument>(
     uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
     fileUrl: { type: String, required: true },
-    fileHash: { type: String, required: true }, // Placeholder for blockchain hash
+    fileHash: { type: String, required: true },
     tags: [{ type: String }],
   },
   { timestamps: true }
