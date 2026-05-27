@@ -1,5 +1,7 @@
-import { unlink } from 'fs/promises';
-import type { RequestHandler } from 'express';
+import { createReadStream } from 'fs';
+import { stat, unlink } from 'fs/promises';
+import path from 'path';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { Types } from 'mongoose';
 import {
   MedicalDocument,
@@ -12,7 +14,7 @@ import type { SafeUser, UserRole } from '../types/user.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
-import { getStoredDocumentPath } from '../middleware/upload.middleware';
+import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 
 interface PopulatedUserReference {
   _id: Types.ObjectId;
@@ -133,6 +135,88 @@ const getStringParam = (value: string | string[] | undefined): string => {
   return value ?? '';
 };
 
+const getSafeDownloadFileName = (fileName: string): string => path.basename(fileName).replace(/["\\]/g, '');
+
+const resolveDocumentFilePath = (document: IMedicalDocument): string | null => {
+  if (path.basename(document.storedFileName) !== document.storedFileName) {
+    return null;
+  }
+
+  const resolvedFilePath = path.resolve(UPLOAD_DIRECTORY, document.storedFileName);
+  const uploadRoot = `${UPLOAD_DIRECTORY}${path.sep}`;
+
+  if (!resolvedFilePath.startsWith(uploadRoot)) {
+    return null;
+  }
+
+  return resolvedFilePath;
+};
+
+const streamDocumentFile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  disposition: 'inline' | 'attachment'
+) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (!canAccessDocument(user, document)) {
+    res.status(403).json({ message: 'You do not have permission to access this document' });
+    return;
+  }
+
+  const resolvedFilePath = resolveDocumentFilePath(document);
+
+  if (!resolvedFilePath) {
+    res.status(400).json({ message: 'Stored document path is invalid' });
+    return;
+  }
+
+  let fileStats;
+
+  try {
+    fileStats = await stat(resolvedFilePath);
+  } catch {
+    res.status(404).json({ message: 'Document file is no longer available' });
+    return;
+  }
+
+  if (!fileStats.isFile()) {
+    res.status(404).json({ message: 'Document file is no longer available' });
+    return;
+  }
+
+  const safeFileName = getSafeDownloadFileName(document.originalFileName || document.storedFileName);
+
+  res.setHeader('Content-Type', document.mimeType);
+  res.setHeader('Content-Length', fileStats.size.toString());
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFileName}"`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  await createAuditLog({
+    userId: user.id,
+    action: 'DOCUMENT_ACCESS',
+    targetDocument: document._id,
+    ipAddress: getRequestIpAddress(req),
+  });
+
+  const fileStream = createReadStream(resolvedFilePath);
+  fileStream.on('error', next);
+  fileStream.pipe(res);
+};
+
 export const listDoctors: RequestHandler = asyncHandler(async (_req, res) => {
   const doctors = await User.find({ role: 'doctor' }).sort({ name: 1 });
   res.json({ doctors: doctors.map(toSafeUser) });
@@ -242,6 +326,14 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
 
   const populatedDocument = await populateDocumentUsers(document);
   res.json({ document: serializeMedicalDocument(populatedDocument) });
+});
+
+export const viewDocument: RequestHandler = asyncHandler(async (req, res, next) => {
+  await streamDocumentFile(req, res, next, 'inline');
+});
+
+export const downloadDocument: RequestHandler = asyncHandler(async (req, res, next) => {
+  await streamDocumentFile(req, res, next, 'attachment');
 });
 
 export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, res) => {

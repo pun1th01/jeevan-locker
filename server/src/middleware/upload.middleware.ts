@@ -3,8 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import { randomUUID } from 'crypto';
 
-const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024;
-const UPLOAD_DIRECTORY = path.resolve(process.cwd(), 'uploads');
+export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024;
+export const UPLOAD_DIRECTORY = path.resolve(process.cwd(), 'uploads');
 
 const allowedMimeTypes = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const extensionByMimeType: Record<string, string> = {
