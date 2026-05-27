@@ -1,9 +1,14 @@
 import { app } from './app';
 import { connectDB } from './config/db';
 import { env } from './config/env';
+import { seedDemoUsers } from './utils/seedDemoUsers';
 
 const startServer = async () => {
   await connectDB();
+  
+  if (env.nodeEnv === 'development') {
+    await seedDemoUsers();
+  }
 
   app.listen(env.port, () => {
     console.log(`JeevanLocker API running on port ${env.port}`);

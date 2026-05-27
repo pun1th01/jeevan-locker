@@ -1,6 +1,7 @@
 import type { RequestHandler, Response } from 'express';
 import { User, type IUser } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
+import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { generateAuthToken, toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { validateLoginInput, validateRegisterInput } from '../utils/validation.util';
@@ -45,6 +46,12 @@ export const loginUser: RequestHandler = asyncHandler(async (req, res) => {
     res.status(401).json({ message: 'Invalid email or password' });
     return;
   }
+
+  await createAuditLog({
+    userId: user._id,
+    action: 'USER_LOGIN',
+    ipAddress: getRequestIpAddress(req),
+  });
 
   sendAuthResponse(res, 200, user);
 });

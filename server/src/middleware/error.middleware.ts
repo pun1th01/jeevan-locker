@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
+import { MulterError } from 'multer';
 
 export const notFoundHandler: RequestHandler = (req, res) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.originalUrl}` });
@@ -15,6 +16,21 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
 
   if (error?.name === 'ValidationError') {
     res.status(400).json({ message: 'Validation failed', errors: error.errors });
+    return;
+  }
+
+  if (error instanceof MulterError) {
+    const message =
+      error.code === 'LIMIT_FILE_SIZE'
+        ? 'Uploaded file exceeds the 5 MB limit'
+        : 'Document upload failed';
+
+    res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ message });
+    return;
+  }
+
+  if (error?.message === 'Only PDF, JPG, and PNG files are allowed') {
+    res.status(400).json({ message: error.message });
     return;
   }
 

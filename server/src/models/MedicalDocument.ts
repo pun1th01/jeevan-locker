@@ -1,26 +1,70 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, Schema, Types } from 'mongoose';
+
+export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
 export interface IMedicalDocument extends Document {
-  patientId: mongoose.Types.ObjectId;
-  uploadedBy: mongoose.Types.ObjectId;
+  _id: Types.ObjectId;
   title: string;
-  fileUrl: string;
-  fileHash: string;
-  tags: string[];
+  originalFileName: string;
+  storedFileName: string;
+  filePath: string;
+  mimeType: MedicalDocumentMimeType;
+  uploadedBy: Types.ObjectId;
+  sharedWithDoctors: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
 
-const documentSchema = new Schema<IMedicalDocument>(
+const medicalDocumentSchema = new Schema<IMedicalDocument>(
   {
-    patientId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    title: { type: String, required: true },
-    fileUrl: { type: String, required: true },
-    fileHash: { type: String, required: true },
-    tags: [{ type: String }],
+    title: {
+      type: String,
+      required: [true, 'Document title is required'],
+      trim: true,
+      maxlength: 120,
+    },
+    originalFileName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    storedFileName: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+    filePath: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    mimeType: {
+      type: String,
+      enum: ['application/pdf', 'image/jpeg', 'image/png'],
+      required: true,
+    },
+    uploadedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    sharedWithDoctors: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+        index: true,
+      },
+    ],
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
-export const MedicalDocument = mongoose.model<IMedicalDocument>('MedicalDocument', documentSchema);
+medicalDocumentSchema.index({ uploadedBy: 1, createdAt: -1 });
+medicalDocumentSchema.index({ sharedWithDoctors: 1, createdAt: -1 });
+
+export const MedicalDocument = mongoose.model<IMedicalDocument>('MedicalDocument', medicalDocumentSchema);
