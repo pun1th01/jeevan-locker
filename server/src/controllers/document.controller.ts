@@ -207,7 +207,7 @@ const streamDocumentFile = async (
 
   await createAuditLog({
     userId: user.id,
-    action: 'DOCUMENT_ACCESS',
+    action: disposition === 'inline' ? 'DOCUMENT_PREVIEW' : 'DOCUMENT_DOWNLOAD',
     targetDocument: document._id,
     ipAddress: getRequestIpAddress(req),
   });

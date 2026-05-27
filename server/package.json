@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "seed:demo": "tsx src/utils/seedDemoUsers.ts",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
