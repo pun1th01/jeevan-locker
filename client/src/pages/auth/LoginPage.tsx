@@ -1,4 +1,4 @@
-import { LockKeyhole, LogIn, Mail, Loader2 } from 'lucide-react';
+import { LockKeyhole, LogIn, Mail, Loader2, PlayCircle } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -42,6 +42,28 @@ export default function LoginPage() {
     return Object.keys(nextErrors).length === 0;
   };
 
+  const handleDemoLogin = (role: 'admin' | 'doctor' | 'patient') => {
+    const email = `${role}@jeevanlocker.dev`;
+    const password = `${role.charAt(0).toUpperCase() + role.slice(1)}123!`;
+    setForm({ email, password });
+    
+    // Slight delay to allow state to update before submit
+    setTimeout(() => {
+      executeLogin({ email, password });
+    }, 50);
+  };
+
+  const executeLogin = async (credentials: LoginForm) => {
+    try {
+      await login(credentials);
+      const redirectTo =
+        (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard';
+      navigate(redirectTo, { replace: true });
+    } catch {
+      // Error handled by store
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -49,14 +71,7 @@ export default function LoginPage() {
       return;
     }
 
-    try {
-      await login(form);
-      const redirectTo =
-        (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard';
-      navigate(redirectTo, { replace: true });
-    } catch {
-      // Store-level error state drives the visible message.
-    }
+    await executeLogin(form);
   };
 
   return (
@@ -128,6 +143,49 @@ export default function LoginPage() {
             Sign in
           </Button>
         </form>
+
+        {import.meta.env.DEV && (
+          <div className="mt-6 border-t border-white/10 pt-6">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                Development Access
+              </p>
+              <div className="flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                <PlayCircle className="h-3 w-3" />
+                DEMO MODE
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto border-emerald-400/20 bg-emerald-400/5 py-2 text-xs text-emerald-200 hover:bg-emerald-400/20 hover:text-emerald-50"
+                onClick={() => handleDemoLogin('admin')}
+                disabled={isLoading}
+              >
+                Admin
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto border-emerald-400/20 bg-emerald-400/5 py-2 text-xs text-emerald-200 hover:bg-emerald-400/20 hover:text-emerald-50"
+                onClick={() => handleDemoLogin('doctor')}
+                disabled={isLoading}
+              >
+                Doctor
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto border-emerald-400/20 bg-emerald-400/5 py-2 text-xs text-emerald-200 hover:bg-emerald-400/20 hover:text-emerald-50"
+                onClick={() => handleDemoLogin('patient')}
+                disabled={isLoading}
+              >
+                Patient
+              </Button>
+            </div>
+          </div>
+        )}
 
         <p className="mt-6 text-center text-sm text-slate-400">
           New to JeevanLocker?{' '}

@@ -7,6 +7,7 @@ interface CreateAuditLogInput {
   action: AuditAction;
   targetDocument?: string | Types.ObjectId | null;
   ipAddress: string;
+  metadata?: Record<string, string>;
 }
 
 const toObjectId = (value: string | Types.ObjectId): Types.ObjectId =>
@@ -31,6 +32,7 @@ export const createAuditLog = async ({
   action,
   targetDocument = null,
   ipAddress,
+  metadata,
 }: CreateAuditLogInput) => {
   await AccessLog.create({
     userId: toObjectId(userId),
@@ -38,5 +40,6 @@ export const createAuditLog = async ({
     targetDocument: targetDocument ? toObjectId(targetDocument) : null,
     timestamp: new Date(),
     ipAddress,
+    metadata,
   });
 };

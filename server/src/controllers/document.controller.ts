@@ -8,12 +8,14 @@ import {
   type IMedicalDocument,
   type MedicalDocumentMimeType,
 } from '../models/MedicalDocument';
+import { EmergencyAccess } from '../models/EmergencyAccess';
 import { User } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
 import type { SafeUser, UserRole } from '../types/user.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
+import { findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 
 interface PopulatedUserReference {
@@ -99,17 +101,50 @@ const populateDocumentUsers = async (document: IMedicalDocument): Promise<IMedic
 
 const validateAuthenticatedUser = (req: AuthenticatedRequest) => req.user ?? null;
 
-const canAccessDocument = (user: SafeUser, document: IMedicalDocument): boolean => {
+interface DocumentAccessDecision {
+  allowed: boolean;
+  emergencyAccessId?: string;
+  emergencyExpiresAt?: string;
+}
+
+const getDocumentAccessDecision = async (
+  user: SafeUser,
+  document: IMedicalDocument
+): Promise<DocumentAccessDecision> => {
   if (user.role === 'admin') {
-    return true;
+    return { allowed: true };
   }
 
   if (user.role === 'patient') {
-    return document.uploadedBy.toString() === user.id;
+    return { allowed: document.uploadedBy.toString() === user.id };
   }
 
-  return document.sharedWithDoctors.some((doctorId) => doctorId.toString() === user.id);
+  if (document.sharedWithDoctors.some((doctorId) => doctorId.toString() === user.id)) {
+    return { allowed: true };
+  }
+
+  const emergencyAccess = await findActiveEmergencyAccess(user.id, document._id);
+
+  if (!emergencyAccess) {
+    return { allowed: false };
+  }
+
+  return {
+    allowed: true,
+    emergencyAccessId: emergencyAccess._id.toString(),
+    emergencyExpiresAt: emergencyAccess.expiresAt.toISOString(),
+  };
 };
+
+const getEmergencyAuditMetadata = (accessDecision: DocumentAccessDecision, patientId: string) =>
+  accessDecision.emergencyAccessId && accessDecision.emergencyExpiresAt
+    ? {
+        accessMethod: 'emergency',
+        emergencyAccessId: accessDecision.emergencyAccessId,
+        patientId,
+        expiresAt: accessDecision.emergencyExpiresAt,
+      }
+    : undefined;
 
 const removeUploadedFile = async (filePath: string) => {
   try {
@@ -172,7 +207,9 @@ const streamDocumentFile = async (
     return;
   }
 
-  if (!canAccessDocument(user, document)) {
+  const accessDecision = await getDocumentAccessDecision(user, document);
+
+  if (!accessDecision.allowed) {
     res.status(403).json({ message: 'You do not have permission to access this document' });
     return;
   }
@@ -210,6 +247,7 @@ const streamDocumentFile = async (
     action: disposition === 'inline' ? 'DOCUMENT_PREVIEW' : 'DOCUMENT_DOWNLOAD',
     targetDocument: document._id,
     ipAddress: getRequestIpAddress(req),
+    metadata: getEmergencyAuditMetadata(accessDecision, document.uploadedBy.toString()),
   });
 
   const fileStream = createReadStream(resolvedFilePath);
@@ -281,12 +319,26 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
-  const query =
-    user.role === 'admin'
-      ? {}
-      : user.role === 'doctor'
-        ? { sharedWithDoctors: user.id }
-        : { uploadedBy: user.id };
+  let query: Record<string, unknown>;
+
+  if (user.role === 'admin') {
+    query = {};
+  } else if (user.role === 'doctor') {
+    const activeEmergencyAccesses = await EmergencyAccess.find({
+      doctorId: user.id,
+      status: 'ACTIVE',
+      expiresAt: { $gt: new Date() },
+    }).select('documentId');
+
+    query = {
+      $or: [
+        { sharedWithDoctors: user.id },
+        { _id: { $in: activeEmergencyAccesses.map((emergencyAccess) => emergencyAccess.documentId) } },
+      ],
+    };
+  } else {
+    query = { uploadedBy: user.id };
+  }
 
   const documents = await MedicalDocument.find(query)
     .sort({ createdAt: -1 })
@@ -312,7 +364,9 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
-  if (!canAccessDocument(user, document)) {
+  const accessDecision = await getDocumentAccessDecision(user, document);
+
+  if (!accessDecision.allowed) {
     res.status(403).json({ message: 'You do not have permission to access this document' });
     return;
   }
@@ -322,6 +376,7 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
     action: 'DOCUMENT_ACCESS',
     targetDocument: document._id,
     ipAddress: getRequestIpAddress(req),
+    metadata: getEmergencyAuditMetadata(accessDecision, document.uploadedBy.toString()),
   });
 
   const populatedDocument = await populateDocumentUsers(document);

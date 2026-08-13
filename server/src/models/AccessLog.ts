@@ -7,6 +7,7 @@ export const AUDIT_ACTIONS = [
   'DOCUMENT_PREVIEW',
   'DOCUMENT_DOWNLOAD',
   'DOCUMENT_SHARE',
+  'EMERGENCY_ACCESS_GRANTED',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -18,6 +19,7 @@ export interface IAccessLog extends Document {
   targetDocument: Types.ObjectId | null;
   timestamp: Date;
   ipAddress: string;
+  metadata?: Record<string, string>;
 }
 
 const accessLogSchema = new Schema<IAccessLog>(
@@ -50,6 +52,10 @@ const accessLogSchema = new Schema<IAccessLog>(
       type: String,
       required: true,
       trim: true,
+    },
+    metadata: {
+      type: Schema.Types.Mixed,
+      default: undefined,
     },
   },
   {

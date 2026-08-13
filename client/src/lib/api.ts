@@ -20,9 +20,6 @@ const getPersistedToken = (): string | null => {
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api',
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
 api.interceptors.request.use((config) => {
@@ -48,11 +45,26 @@ api.interceptors.response.use(
 
 export const getApiErrorMessage = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
-    const responseMessage = error.response?.data?.message;
-
-    if (typeof responseMessage === 'string') {
-      return responseMessage;
+    if (error.code === 'ERR_NETWORK') {
+      return 'Server unavailable. Please check your connection.';
     }
+
+    const data = error.response?.data as { message?: string; errors?: Record<string, string> };
+
+    if (data?.errors && typeof data.errors === 'object') {
+      const errorMessages = Object.values(data.errors);
+      if (errorMessages.length > 0) {
+        return `${data.message || 'Validation failed'}: ${errorMessages.join(', ')}`;
+      }
+    }
+
+    if (typeof data?.message === 'string') {
+      return data.message;
+    }
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
 
   return 'Something went wrong. Please try again.';

@@ -40,6 +40,7 @@ interface AuditLogResponse {
   targetDocument: AuditDocumentSummary | null;
   timestamp: string;
   ipAddress: string;
+  metadata?: Record<string, string>;
 }
 
 const isPopulatedUserReference = (value: unknown): value is PopulatedUserReference =>
@@ -113,6 +114,7 @@ const serializeAccessLog = (log: IAccessLog): AuditLogResponse => {
     targetDocument: serializeDocumentReference(logWithReferences.targetDocument),
     timestamp: log.timestamp.toISOString(),
     ipAddress: log.ipAddress,
+    metadata: log.metadata,
   };
 };
 
