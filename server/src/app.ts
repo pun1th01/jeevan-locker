@@ -7,6 +7,7 @@ import auditRoutes from './routes/audit.routes';
 import authRoutes from './routes/auth.routes';
 import documentRoutes from './routes/document.routes';
 import emergencyAccessRoutes from './routes/emergencyAccess.routes';
+import consentRoutes from './routes/consent.routes';
 
 export const app = express();
 
@@ -26,6 +27,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/emergency-access', emergencyAccessRoutes);
+app.use('/api/consents', consentRoutes);
 app.use('/api/audit', auditRoutes);
 
 app.use(notFoundHandler);

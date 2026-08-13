@@ -1,4 +1,4 @@
-import { Activity, Database, Download, Eye, FileSearch, FileUp, Loader2, LogIn, Share2, Siren, UsersRound } from 'lucide-react';
+import { Activity, CheckCircle2, Database, Download, Eye, FileSearch, FileUp, Loader2, LogIn, Share2, Siren, UsersRound, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import { getApiErrorMessage } from '../../lib/api';
@@ -12,6 +12,10 @@ const actionLabels: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'Document preview',
   DOCUMENT_DOWNLOAD: 'Document download',
   DOCUMENT_SHARE: 'Document sharing',
+  CONSENT_REQUESTED: 'Consent requested',
+  CONSENT_APPROVED: 'Consent approved',
+  CONSENT_REJECTED: 'Consent rejected',
+  CONSENT_REVOKED: 'Consent revoked',
   EMERGENCY_ACCESS_GRANTED: 'Emergency access granted',
 };
 
@@ -22,6 +26,10 @@ const actionStyles: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'bg-sky-300/10 text-sky-100',
   DOCUMENT_DOWNLOAD: 'bg-rose-300/10 text-rose-100',
   DOCUMENT_SHARE: 'bg-violet-300/10 text-violet-100',
+  CONSENT_REQUESTED: 'bg-cyan-300/10 text-cyan-100',
+  CONSENT_APPROVED: 'bg-emerald-300/10 text-emerald-100',
+  CONSENT_REJECTED: 'bg-amber-300/10 text-amber-100',
+  CONSENT_REVOKED: 'bg-rose-300/10 text-rose-100',
   EMERGENCY_ACCESS_GRANTED: 'bg-rose-400/15 text-rose-100',
 };
 
@@ -32,6 +40,10 @@ const actionDescriptions: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'Secure in-app document preview opened',
   DOCUMENT_DOWNLOAD: 'Authorized document download started',
   DOCUMENT_SHARE: 'Patient granted doctor access',
+  CONSENT_REQUESTED: 'Doctor requested patient-approved document access',
+  CONSENT_APPROVED: 'Patient approved document access',
+  CONSENT_REJECTED: 'Patient rejected document access',
+  CONSENT_REVOKED: 'Patient revoked document access',
   EMERGENCY_ACCESS_GRANTED: 'Doctor received time-limited Break-Glass access',
 };
 
@@ -54,6 +66,18 @@ const AuditActionIcon = ({ action }: { action: AuditAction }) => {
   }
 
   if (action === 'DOCUMENT_SHARE') {
+    return <Share2 className="h-4 w-4" />;
+  }
+
+  if (action === 'CONSENT_APPROVED') {
+    return <CheckCircle2 className="h-4 w-4" />;
+  }
+
+  if (action === 'CONSENT_REJECTED' || action === 'CONSENT_REVOKED') {
+    return <XCircle className="h-4 w-4" />;
+  }
+
+  if (action === 'CONSENT_REQUESTED') {
     return <Share2 className="h-4 w-4" />;
   }
 
@@ -163,6 +187,9 @@ export default function AdminDashboard() {
                       ) : null}
                       {log.metadata?.reason ? (
                         <p className="mt-2 text-xs leading-5 text-rose-100/90">Reason: {log.metadata.reason}</p>
+                      ) : null}
+                      {log.metadata?.purpose ? (
+                        <p className="mt-2 text-xs leading-5 text-cyan-100/90">Purpose: {log.metadata.purpose}</p>
                       ) : null}
                       {log.metadata?.accessMethod === 'emergency' ? (
                         <p className="mt-2 text-xs leading-5 text-rose-100/90">

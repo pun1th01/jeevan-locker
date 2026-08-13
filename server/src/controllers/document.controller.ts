@@ -9,6 +9,7 @@ import {
   type MedicalDocumentMimeType,
 } from '../models/MedicalDocument';
 import { EmergencyAccess } from '../models/EmergencyAccess';
+import { ConsentGrant } from '../models/ConsentGrant';
 import { User } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
 import type { SafeUser, UserRole } from '../types/user.types';
@@ -16,6 +17,7 @@ import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
+import { findApprovedConsent } from '../utils/consent.util';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 
 interface PopulatedUserReference {
@@ -103,6 +105,7 @@ const validateAuthenticatedUser = (req: AuthenticatedRequest) => req.user ?? nul
 
 interface DocumentAccessDecision {
   allowed: boolean;
+  consentGrantId?: string;
   emergencyAccessId?: string;
   emergencyExpiresAt?: string;
 }
@@ -123,6 +126,12 @@ const getDocumentAccessDecision = async (
     return { allowed: true };
   }
 
+  const approvedConsent = await findApprovedConsent(user.id, document._id);
+
+  if (approvedConsent) {
+    return { allowed: true, consentGrantId: approvedConsent._id.toString() };
+  }
+
   const emergencyAccess = await findActiveEmergencyAccess(user.id, document._id);
 
   if (!emergencyAccess) {
@@ -136,15 +145,25 @@ const getDocumentAccessDecision = async (
   };
 };
 
-const getEmergencyAuditMetadata = (accessDecision: DocumentAccessDecision, patientId: string) =>
-  accessDecision.emergencyAccessId && accessDecision.emergencyExpiresAt
-    ? {
+const getDocumentAccessAuditMetadata = (
+  accessDecision: DocumentAccessDecision,
+  patientId: string
+): Record<string, string> | undefined => {
+  if (accessDecision.consentGrantId) {
+    return { accessMethod: 'consent', consentGrantId: accessDecision.consentGrantId, patientId };
+  }
+
+  if (accessDecision.emergencyAccessId && accessDecision.emergencyExpiresAt) {
+    return {
         accessMethod: 'emergency',
         emergencyAccessId: accessDecision.emergencyAccessId,
         patientId,
         expiresAt: accessDecision.emergencyExpiresAt,
-      }
-    : undefined;
+      };
+  }
+
+  return undefined;
+};
 
 const removeUploadedFile = async (filePath: string) => {
   try {
@@ -247,7 +266,7 @@ const streamDocumentFile = async (
     action: disposition === 'inline' ? 'DOCUMENT_PREVIEW' : 'DOCUMENT_DOWNLOAD',
     targetDocument: document._id,
     ipAddress: getRequestIpAddress(req),
-    metadata: getEmergencyAuditMetadata(accessDecision, document.uploadedBy.toString()),
+    metadata: getDocumentAccessAuditMetadata(accessDecision, document.uploadedBy.toString()),
   });
 
   const fileStream = createReadStream(resolvedFilePath);
@@ -331,10 +350,12 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
       status: 'ACTIVE',
       expiresAt: { $gt: new Date() },
     }).select('documentId');
+    const approvedConsents = await ConsentGrant.find({ doctorId: user.id, status: 'APPROVED' }).select('documentId');
 
     query = {
       $or: [
         { sharedWithDoctors: user.id },
+        { _id: { $in: approvedConsents.map((consent) => consent.documentId) } },
         { _id: { $in: activeEmergencyAccesses.map((emergencyAccess) => emergencyAccess.documentId) } },
       ],
     };
@@ -378,7 +399,7 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
     action: 'DOCUMENT_ACCESS',
     targetDocument: document._id,
     ipAddress: getRequestIpAddress(req),
-    metadata: getEmergencyAuditMetadata(accessDecision, document.uploadedBy.toString()),
+    metadata: getDocumentAccessAuditMetadata(accessDecision, document.uploadedBy.toString()),
   });
 
   const populatedDocument = await populateDocumentUsers(document);

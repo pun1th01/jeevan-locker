@@ -1,4 +1,4 @@
-import { CheckCircle2, FileCheck2, Loader2, Share2, Upload, UsersRound } from 'lucide-react';
+import { CheckCircle2, FileCheck2, Loader2, Share2, Upload, UsersRound, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
@@ -7,8 +7,10 @@ import DocumentUploadModal from '../../components/documents/DocumentUploadModal'
 import { Button } from '../../components/ui/button';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
+import { consentService } from '../../services/consent.service';
 import type { User } from '../../types/auth';
 import type { MedicalDocument, UploadDocumentInput } from '../../types/document';
+import type { ConsentGrant } from '../../types/consent';
 
 export default function PatientDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -26,18 +28,23 @@ export default function PatientDashboard() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [consents, setConsents] = useState<ConsentGrant[]>([]);
+  const [consentActionId, setConsentActionId] = useState<string | null>(null);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
     setPageError(null);
 
     try {
-      const [documentList, doctorList] = await Promise.all([
+      const [documentList, doctorList, receivedConsents] = await Promise.all([
         documentService.getMyDocuments(),
         documentService.getDoctors(),
+        consentService.getReceived(),
       ]);
       setDocuments(documentList);
       setDoctors(doctorList);
+      setConsents(receivedConsents);
     } catch (error) {
       setPageError(getApiErrorMessage(error));
     } finally {
@@ -145,6 +152,30 @@ export default function PatientDashboard() {
     }
   };
 
+  const handleConsentAction = async (consent: ConsentGrant, action: 'approve' | 'reject' | 'revoke') => {
+    setConsentActionId(consent.id);
+    setConsentError(null);
+    try {
+      const result = await consentService[action](consent.id);
+      setConsents((currentConsents) =>
+        action === 'reject'
+          ? currentConsents.filter((currentConsent) => currentConsent.id !== consent.id)
+          : currentConsents.map((currentConsent) => (currentConsent.id === consent.id ? result.consent : currentConsent))
+      );
+      setSuccessMessage(
+        action === 'approve'
+          ? `Access approved for ${result.consent.doctor.name}.`
+          : action === 'revoke'
+            ? `Access revoked for ${result.consent.doctor.name}.`
+            : 'Access request rejected.'
+      );
+    } catch (error) {
+      setConsentError(getApiErrorMessage(error));
+    } finally {
+      setConsentActionId(null);
+    }
+  };
+
   const renderShareActions = (document: MedicalDocument) => {
     const availableDoctors = doctors.filter(
       (doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id)
@@ -243,6 +274,12 @@ export default function PatientDashboard() {
             </div>
           ) : null}
 
+          {consentError ? (
+            <div className="mt-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
+              {consentError}
+            </div>
+          ) : null}
+
           <DocumentList
             documents={documents}
             isLoading={isLoading}
@@ -255,6 +292,28 @@ export default function PatientDashboard() {
             onPreviewDocument={setPreviewDocument}
             renderActions={renderShareActions}
           />
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-cyan-300/10"><UsersRound className="h-5 w-5 text-cyan-200" /></span>
+            <div><h2 className="text-lg font-semibold text-white">Access Requests</h2><p className="mt-1 text-sm text-slate-400">Approve, reject, or revoke doctor access to your records.</p></div>
+          </div>
+          {consents.length > 0 ? (
+            <div className="mt-5 space-y-3">
+              {consents.map((consent) => (
+                <div key={consent.id} className="rounded-md border border-white/10 bg-slate-950/50 p-4 text-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-white">{consent.doctor.name}</p><span className="rounded-md bg-cyan-300/10 px-2 py-1 text-xs font-semibold text-cyan-100">{consent.status}</span></div><p className="mt-2 text-slate-300">{consent.document.title}</p><p className="mt-1 text-slate-400">Purpose: {consent.purpose}</p><p className="mt-2 text-xs text-slate-500">Requested {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(consent.requestedAt))}</p></div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      {consent.status === 'PENDING' ? <><Button type="button" variant="secondary" size="sm" onClick={() => void handleConsentAction(consent, 'reject')} disabled={consentActionId === consent.id}><XCircle className="h-4 w-4" />Reject</Button><Button type="button" size="sm" onClick={() => void handleConsentAction(consent, 'approve')} disabled={consentActionId === consent.id}>{consentActionId === consent.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}Approve</Button></> : null}
+                      {consent.status === 'APPROVED' ? <Button type="button" variant="destructive" size="sm" onClick={() => void handleConsentAction(consent, 'revoke')} disabled={consentActionId === consent.id}>{consentActionId === consent.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}Revoke</Button> : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <div className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-5 text-sm text-slate-400">No pending document access requests.</div>}
         </div>
 
         <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">

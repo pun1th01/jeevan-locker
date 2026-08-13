@@ -7,6 +7,10 @@ export type AuditAction =
   | 'DOCUMENT_PREVIEW'
   | 'DOCUMENT_DOWNLOAD'
   | 'DOCUMENT_SHARE'
+  | 'CONSENT_REQUESTED'
+  | 'CONSENT_APPROVED'
+  | 'CONSENT_REJECTED'
+  | 'CONSENT_REVOKED'
   | 'EMERGENCY_ACCESS_GRANTED';
 
 export interface AuditDocumentSummary {

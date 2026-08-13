@@ -1,15 +1,18 @@
-import { Calendar, CheckCircle2, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
+import { Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import EmergencyAccessModal from '../../components/emergency/EmergencyAccessModal';
+import ConsentRequestModal from '../../components/consent/ConsentRequestModal';
 import { Button } from '../../components/ui/button';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
+import { consentService } from '../../services/consent.service';
 import type { MedicalDocument } from '../../types/document';
 import type { EmergencyAccess, EmergencyAccessTarget, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
+import type { ConsentGrant, ConsentTarget, RequestConsentInput } from '../../types/consent';
 
 export default function DoctorDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -26,6 +29,12 @@ export default function DoctorDashboard() {
   const [emergencyError, setEmergencyError] = useState<string | null>(null);
   const [emergencyNotice, setEmergencyNotice] = useState<string | null>(null);
   const [activeEmergencyAccess, setActiveEmergencyAccess] = useState<EmergencyAccess | null>(null);
+  const [consentTargets, setConsentTargets] = useState<ConsentTarget[]>([]);
+  const [myConsents, setMyConsents] = useState<ConsentGrant[]>([]);
+  const [isLoadingConsentTargets, setIsLoadingConsentTargets] = useState(true);
+  const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
+  const [isRequestingConsent, setIsRequestingConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   const formatDate = (value: string) =>
     new Intl.DateTimeFormat('en-IN', {
@@ -61,14 +70,28 @@ export default function DoctorDashboard() {
     }
   }, []);
 
+  const loadConsentData = useCallback(async () => {
+    setIsLoadingConsentTargets(true);
+    try {
+      const [targets, consents] = await Promise.all([consentService.getTargets(), consentService.getMine()]);
+      setConsentTargets(targets);
+      setMyConsents(consents);
+    } catch (error) {
+      setConsentError(getApiErrorMessage(error));
+    } finally {
+      setIsLoadingConsentTargets(false);
+    }
+  }, []);
+
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadDocuments();
       void loadEmergencyTargets();
+      void loadConsentData();
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loadDocuments, loadEmergencyTargets]);
+  }, [loadConsentData, loadDocuments, loadEmergencyTargets]);
 
   useEffect(() => {
     if (!accessNotice) {
@@ -143,6 +166,21 @@ export default function DoctorDashboard() {
     }
   };
 
+  const handleRequestConsent = async (input: RequestConsentInput) => {
+    setIsRequestingConsent(true);
+    setConsentError(null);
+    try {
+      const { consent } = await consentService.request(input);
+      setMyConsents((currentConsents) => [consent, ...currentConsents]);
+      setAccessNotice(`Access request sent to ${consent.patient.name}.`);
+    } catch (error) {
+      setConsentError(getApiErrorMessage(error));
+      throw error;
+    } finally {
+      setIsRequestingConsent(false);
+    }
+  };
+
   return (
     <>
       <DashboardShell
@@ -161,18 +199,24 @@ export default function DoctorDashboard() {
               <p className="mt-1 text-sm text-slate-400">Opening record details creates an auditable access event.</p>
             </div>
           </div>
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              setEmergencyError(null);
-              setIsEmergencyDialogOpen(true);
-            }}
-          >
-            <Siren className="h-4 w-4" />
-            Emergency Access
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={() => { setConsentError(null); setIsConsentDialogOpen(true); }}>
+              <ClipboardCheck className="h-4 w-4" />
+              Request Access
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setEmergencyError(null);
+                setIsEmergencyDialogOpen(true);
+              }}
+            >
+              <Siren className="h-4 w-4" />
+              Emergency Access
+            </Button>
+          </div>
         </div>
 
         {pageError ? (
@@ -211,6 +255,21 @@ export default function DoctorDashboard() {
           onOpenDocument={(documentId) => void handleOpenDocument(documentId)}
           onPreviewDocument={setPreviewDocument}
         />
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
+        <h2 className="text-lg font-semibold text-white">My Access Requests</h2>
+        <p className="mt-1 text-sm text-slate-400">Track patient approval of your normal document-access requests.</p>
+        {myConsents.length > 0 ? (
+          <div className="mt-5 space-y-3">
+            {myConsents.slice(0, 6).map((consent) => (
+              <div key={consent.id} className="rounded-md border border-white/10 bg-slate-950/50 p-4 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-white">{consent.document.title}</p><span className="rounded-md bg-cyan-300/10 px-2 py-1 text-xs font-semibold text-cyan-100">{consent.status}</span></div>
+                <p className="mt-2 text-slate-300">Patient: {consent.patient.name}</p><p className="mt-1 text-slate-400">Purpose: {consent.purpose}</p>
+              </div>
+            ))}
+          </div>
+        ) : <p className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-4 text-sm text-slate-400">No access requests yet.</p>}
       </div>
 
       <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
@@ -269,6 +328,16 @@ export default function DoctorDashboard() {
         error={emergencyError}
         onClose={() => setIsEmergencyDialogOpen(false)}
         onGrant={handleGrantEmergencyAccess}
+      />
+
+      <ConsentRequestModal
+        isOpen={isConsentDialogOpen}
+        isLoadingTargets={isLoadingConsentTargets}
+        isRequesting={isRequestingConsent}
+        targets={consentTargets}
+        error={consentError}
+        onClose={() => setIsConsentDialogOpen(false)}
+        onRequest={handleRequestConsent}
       />
     </>
   );
