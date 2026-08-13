@@ -3,7 +3,7 @@ import { AlertCircle, Download, FileText, Image, Loader2, ShieldCheck, X } from 
 import { useEffect, useState } from 'react';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
-import type { MedicalDocument } from '../../types/document';
+import type { IntegrityVerificationResult, MedicalDocument } from '../../types/document';
 import { Button } from '../ui/button';
 
 interface DocumentPreviewModalProps {
@@ -26,12 +26,17 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [integrityResult, setIntegrityResult] = useState<IntegrityVerificationResult | null>(null);
+  const [integrityError, setIntegrityError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen || !document) {
       setPreviewUrl(null);
       setError(null);
       setDownloadError(null);
+      setIntegrityResult(null);
+      setIntegrityError(null);
       return;
     }
 
@@ -40,6 +45,8 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
     setPreviewUrl(null);
     setError(null);
     setDownloadError(null);
+    setIntegrityResult(null);
+    setIntegrityError(null);
 
     documentService
       .getDocumentPreviewBlob(document.id, controller.signal)
@@ -87,6 +94,20 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
     }
   };
 
+  const handleVerifyIntegrity = async () => {
+    if (!document) return;
+    setIsVerifying(true);
+    setIntegrityError(null);
+    try {
+      setIntegrityResult(await documentService.verifyIntegrity(document.id));
+    } catch (requestError) {
+      setIntegrityResult(null);
+      setIntegrityError(getApiErrorMessage(requestError));
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   const isImage = document?.mimeType === 'image/jpeg' || document?.mimeType === 'image/png';
   const isPdf = document?.mimeType === 'application/pdf';
 
@@ -122,6 +143,10 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
             </div>
 
             <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={handleVerifyIntegrity} disabled={!document || isVerifying}>
+                {isVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {isVerifying ? 'Verifying...' : 'Verify integrity'}
+              </Button>
               <Button type="button" variant="secondary" size="sm" onClick={handleDownload} disabled={!document || isDownloading}>
                 {isDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                 Download
@@ -181,6 +206,29 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
               <div className="mt-3 flex items-start gap-2 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 {downloadError}
+              </div>
+            ) : null}
+
+            {integrityError ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-3 text-sm text-rose-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{integrityError}</span>
+              </div>
+            ) : null}
+
+            {integrityResult ? (
+              <div className={`mt-3 rounded-md border p-4 text-sm ${integrityResult.verified ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100' : 'border-rose-400/25 bg-rose-400/10 text-rose-100'}`}>
+                <div className="flex items-center gap-2 font-semibold">
+                  {integrityResult.verified ? <ShieldCheck className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+                  {integrityResult.verified ? 'DOCUMENT VERIFIED' : 'INTEGRITY FAILURE'}
+                </div>
+                <p className="mt-2 leading-6">{integrityResult.verified ? 'Blockchain hash matches the current file.' : 'The current file hash does not match the hash registered on the blockchain. The document may have been modified.'}</p>
+                <div className="mt-3 space-y-1 break-all text-xs opacity-90">
+                  <p>Algorithm: {integrityResult.algorithm}</p>
+                  <p>Blockchain hash: {integrityResult.blockchainHash}</p>
+                  {!integrityResult.verified ? <p>Current hash: {integrityResult.currentHash}</p> : null}
+                  <p>Transaction: {integrityResult.blockchainTxHash}</p>
+                </div>
               </div>
             ) : null}
           </div>

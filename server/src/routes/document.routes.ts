@@ -6,6 +6,7 @@ import {
   listDoctors,
   shareDocumentWithDoctor,
   uploadDocument,
+  verifyDocumentIntegrity,
   viewDocument,
 } from '../controllers/document.controller';
 import { requireRole, verifyToken } from '../middleware/auth.middleware';
@@ -20,6 +21,7 @@ router.post('/upload', requireRole('patient'), uploadMedicalDocument.single('fil
 router.get('/my-documents', getMyDocuments);
 router.get('/:id/view', viewDocument);
 router.get('/:id/download', downloadDocument);
+router.get('/:id/integrity', verifyDocumentIntegrity);
 router.get('/:id', getDocument);
 router.patch('/:id/share', requireRole('patient'), shareDocumentWithDoctor);
 

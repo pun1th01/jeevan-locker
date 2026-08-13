@@ -6,7 +6,7 @@ export const notFoundHandler: RequestHandler = (req, res) => {
 };
 
 export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
-  const statusCode = res.statusCode >= 400 ? res.statusCode : 500;
+  const statusCode = res.statusCode >= 400 ? res.statusCode : error?.statusCode ?? 500;
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (error?.code === 11000) {

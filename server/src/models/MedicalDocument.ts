@@ -11,6 +11,11 @@ export interface IMedicalDocument extends Document {
   mimeType: MedicalDocumentMimeType;
   uploadedBy: Types.ObjectId;
   sharedWithDoctors: Types.ObjectId[];
+  documentHash?: string;
+  hashAlgorithm?: 'SHA-256';
+  blockchainDocumentId?: string;
+  blockchainTxHash?: string;
+  blockchainRegisteredAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,6 +62,26 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
         index: true,
       },
     ],
+    documentHash: {
+      type: String,
+      trim: true,
+      match: [/^[a-f0-9]{64}$/i, 'Document hash must be a SHA-256 hex digest'],
+    },
+    hashAlgorithm: {
+      type: String,
+      enum: ['SHA-256'],
+    },
+    blockchainDocumentId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    blockchainTxHash: {
+      type: String,
+      trim: true,
+    },
+    blockchainRegisteredAt: Date,
   },
   {
     timestamps: true,

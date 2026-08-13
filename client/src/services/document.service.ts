@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { api } from '../lib/api';
 import type { User } from '../types/auth';
-import type { MedicalDocument, UploadDocumentInput } from '../types/document';
+import type { IntegrityVerificationResult, MedicalDocument, UploadDocumentInput } from '../types/document';
 
 interface DocumentResponse {
   document: MedicalDocument;
@@ -48,6 +48,11 @@ export const documentService = {
   async getDocument(documentId: string): Promise<MedicalDocument> {
     const { data } = await api.get<DocumentResponse>(`/documents/${documentId}`);
     return data.document;
+  },
+
+  async verifyIntegrity(documentId: string): Promise<IntegrityVerificationResult> {
+    const { data } = await api.get<IntegrityVerificationResult>(`/documents/${documentId}/integrity`);
+    return data;
   },
 
   async getDocumentPreviewBlob(documentId: string, signal?: AbortSignal): Promise<Blob> {

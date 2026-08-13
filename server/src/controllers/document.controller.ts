@@ -19,6 +19,8 @@ import { asyncHandler } from '../utils/asyncHandler.util';
 import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
 import { findApprovedConsent } from '../utils/consent.util';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
+import { calculateFileSha256, SHA_256 } from '../utils/documentHash.util';
+import { getRegisteredDocumentHash, registerDocumentHash } from '../services/documentRegistry.service';
 
 interface PopulatedUserReference {
   _id: Types.ObjectId;
@@ -42,6 +44,10 @@ interface MedicalDocumentResponse {
   mimeType: MedicalDocumentMimeType;
   uploadedBy: SafeUser;
   sharedWithDoctors: SafeUser[];
+  documentHash?: string;
+  hashAlgorithm?: 'SHA-256';
+  blockchainTxHash?: string;
+  blockchainRegisteredAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -87,6 +93,10 @@ const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentRe
     mimeType: document.mimeType,
     uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
     sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference),
+    documentHash: document.documentHash,
+    hashAlgorithm: document.hashAlgorithm,
+    blockchainTxHash: document.blockchainTxHash,
+    blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -302,6 +312,7 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
+  const documentHash = await calculateFileSha256(file.path);
   let document: IMedicalDocument;
 
   try {
@@ -313,8 +324,23 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
       mimeType: file.mimetype as MedicalDocumentMimeType,
       uploadedBy: user.id,
       sharedWithDoctors: [],
+      documentHash,
+      hashAlgorithm: SHA_256,
     });
   } catch (error) {
+    await removeUploadedFile(file.path);
+    throw error;
+  }
+
+  try {
+    const blockchainDocumentId = document._id.toString();
+    const registration = await registerDocumentHash(blockchainDocumentId, documentHash);
+    document.blockchainDocumentId = blockchainDocumentId;
+    document.blockchainTxHash = registration.transactionHash;
+    document.blockchainRegisteredAt = registration.registeredAt;
+    await document.save();
+  } catch (error) {
+    await MedicalDocument.findByIdAndDelete(document._id);
     await removeUploadedFile(file.path);
     throw error;
   }
@@ -412,6 +438,72 @@ export const viewDocument: RequestHandler = asyncHandler(async (req, res, next) 
 
 export const downloadDocument: RequestHandler = asyncHandler(async (req, res, next) => {
   await streamDocumentFile(req, res, next, 'attachment');
+});
+
+export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  const accessDecision = await getDocumentAccessDecision(user, document);
+  if (!accessDecision.allowed) {
+    res.status(403).json({ message: 'You do not have permission to access this document' });
+    return;
+  }
+
+  if (!document.blockchainDocumentId || !document.blockchainTxHash) {
+    res.status(409).json({ message: 'This document was not registered on the blockchain' });
+    return;
+  }
+
+  const resolvedFilePath = resolveDocumentFilePath(document);
+  if (!resolvedFilePath) {
+    res.status(400).json({ message: 'Stored document path is invalid' });
+    return;
+  }
+
+  try {
+    const currentHash = await calculateFileSha256(resolvedFilePath);
+    const blockchainRecord = await getRegisteredDocumentHash(document.blockchainDocumentId);
+
+    if (!blockchainRecord) {
+      res.status(409).json({ message: 'No blockchain hash record exists for this document' });
+      return;
+    }
+
+    const verified = currentHash.toLowerCase() === blockchainRecord.hash.toLowerCase();
+    await createAuditLog({
+      userId: user.id,
+      action: 'DOCUMENT_ACCESS',
+      targetDocument: document._id,
+      ipAddress: getRequestIpAddress(req),
+      metadata: { integrityVerified: String(verified) },
+    });
+
+    res.json({
+      verified,
+      algorithm: SHA_256,
+      currentHash,
+      blockchainHash: blockchainRecord.hash,
+      blockchainTxHash: document.blockchainTxHash,
+      registeredAt: blockchainRecord.timestamp.toISOString(),
+    });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      res.status(404).json({ message: 'Document file is no longer available' });
+      return;
+    }
+    throw error;
+  }
 });
 
 export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, res) => {

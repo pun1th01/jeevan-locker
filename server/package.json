@@ -7,6 +7,9 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "seed:demo": "tsx src/utils/seedDemoUsers.ts",
+    "chain": "hardhat node",
+    "chain:compile": "hardhat compile",
+    "chain:deploy": "hardhat run scripts/deploy-document-registry.js --network localhost",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -24,6 +27,7 @@
     "clsx": "^2.1.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "ethers": "^6.17.0",
     "express": "^5.2.1",
     "express-validator": "^7.3.2",
     "helmet": "^8.1.0",
@@ -36,6 +40,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -44,6 +49,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^25.9.0",
     "autoprefixer": "^10.5.0",
+    "hardhat": "^2.22.0",
     "mongodb-memory-server": "^11.1.0",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.3.0",

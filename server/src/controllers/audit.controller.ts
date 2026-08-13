@@ -124,7 +124,7 @@ export const getAuditSummary: RequestHandler = asyncHandler(async (_req, res) =>
     MedicalDocument.countDocuments(),
     AccessLog.find()
       .sort({ timestamp: -1 })
-      .limit(8)
+      .limit(50)
       .populate('userId', 'name email role createdAt')
       .populate('targetDocument', 'title originalFileName createdAt'),
   ]);
