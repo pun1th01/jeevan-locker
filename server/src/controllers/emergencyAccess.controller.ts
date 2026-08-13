@@ -54,6 +54,8 @@ export const listEmergencyAccessTargets: RequestHandler = asyncHandler(async (re
 
   const documents = await MedicalDocument.find({ sharedWithDoctors: { $ne: doctor.id } })
     .sort({ createdAt: -1 })
+    .limit(100)
+    .select('title uploadedBy')
     .populate('uploadedBy', 'name role');
 
   const targets = documents.flatMap((document) => {
@@ -72,8 +74,6 @@ export const listEmergencyAccessTargets: RequestHandler = asyncHandler(async (re
         document: {
           id: document._id.toString(),
           title: document.title,
-          originalFileName: document.originalFileName,
-          createdAt: document.createdAt.toISOString(),
         },
       },
     ];

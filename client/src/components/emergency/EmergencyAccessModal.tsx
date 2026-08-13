@@ -128,7 +128,6 @@ export default function EmergencyAccessModal({
               <div className="rounded-md border border-rose-300/15 bg-rose-300/[0.04] p-4 text-sm">
                 <p className="font-semibold text-white">Patient: {selectedTarget.patient.name}</p>
                 <p className="mt-2 text-slate-300">Document: {selectedTarget.document.title}</p>
-                <p className="mt-1 break-all text-xs text-slate-500">{selectedTarget.document.originalFileName}</p>
               </div>
             ) : null}
 

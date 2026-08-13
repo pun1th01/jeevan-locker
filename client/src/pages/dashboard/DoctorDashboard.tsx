@@ -62,8 +62,12 @@ export default function DoctorDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadDocuments();
-    void loadEmergencyTargets();
+    const timeoutId = window.setTimeout(() => {
+      void loadDocuments();
+      void loadEmergencyTargets();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [loadDocuments, loadEmergencyTargets]);
 
   useEffect(() => {

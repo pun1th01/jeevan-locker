@@ -15,7 +15,7 @@ import type { SafeUser, UserRole } from '../types/user.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
-import { findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
+import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 
 interface PopulatedUserReference {
@@ -324,6 +324,8 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
   if (user.role === 'admin') {
     query = {};
   } else if (user.role === 'doctor') {
+    await expireEmergencyAccesses(user.id);
+
     const activeEmergencyAccesses = await EmergencyAccess.find({
       doctorId: user.id,
       status: 'ACTIVE',

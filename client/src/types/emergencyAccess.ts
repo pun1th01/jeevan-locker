@@ -19,8 +19,6 @@ export interface EmergencyAccessTarget {
   document: {
     id: string;
     title: string;
-    originalFileName: string;
-    createdAt: string;
   };
 }
 
