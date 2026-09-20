@@ -10,6 +10,8 @@ import emergencyAccessRoutes from './routes/emergencyAccess.routes';
 import consentRoutes from './routes/consent.routes';
 import patientsRoutes from './routes/patients.routes';
 import adminRoutes from './routes/admin.routes';
+import labLinkRoutes from './routes/labLink.routes';
+import labReportRoutes from './routes/labReport.routes';
 
 export const app = express();
 
@@ -36,6 +38,8 @@ app.use('/api/consents', consentRoutes);
 app.use('/api/patients', patientsRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/lab-links', labLinkRoutes);
+app.use('/api/lab/reports', labReportRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

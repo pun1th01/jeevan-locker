@@ -2,6 +2,25 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
+export const TEST_VALUE_FLAGS = ['normal', 'high', 'low', 'critical'] as const;
+
+export type TestValueFlag = (typeof TEST_VALUE_FLAGS)[number];
+
+/**
+ * One measured value on a lab report. `flag` is computed server-side at upload from the bounds stored
+ * alongside it (see utils/testValues.util.ts), so the reason for a `critical` flag is always auditable.
+ */
+export interface ITestValue {
+  name: string;
+  value: number;
+  unit: string;
+  refLow?: number;
+  refHigh?: number;
+  criticalLow?: number;
+  criticalHigh?: number;
+  flag: TestValueFlag;
+}
+
 export interface IMedicalDocument extends Document {
   _id: Types.ObjectId;
   title: string;
@@ -9,6 +28,7 @@ export interface IMedicalDocument extends Document {
   storedFileName: string;
   filePath: string;
   mimeType: MedicalDocumentMimeType;
+  /** The patient who owns the document — also for lab reports. */
   uploadedBy: Types.ObjectId;
   sharedWithDoctors: Types.ObjectId[];
   documentHash?: string;
@@ -16,9 +36,35 @@ export interface IMedicalDocument extends Document {
   blockchainDocumentId?: string;
   blockchainTxHash?: string;
   blockchainRegisteredAt?: Date;
+  // --- Verified lab report fields: all optional, present only when uploadedByLab is set ---
+  /** The lab account that issued the report; undefined for patient uploads. */
+  uploadedByLab?: Types.ObjectId;
+  labName?: string;
+  testName?: string;
+  nablCertNumber?: string;
+  authorizingDoctorName?: string;
+  hospitalName?: string;
+  reportDate?: Date;
+  testValues?: ITestValue[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+const REPORT_TEXT_MAX_LENGTH = 120;
+
+const testValueSchema = new Schema<ITestValue>(
+  {
+    name: { type: String, required: true, trim: true, maxlength: 80 },
+    value: { type: Number, required: true },
+    unit: { type: String, required: true, trim: true, maxlength: 20 },
+    refLow: Number,
+    refHigh: Number,
+    criticalLow: Number,
+    criticalHigh: Number,
+    flag: { type: String, enum: TEST_VALUE_FLAGS, required: true },
+  },
+  { _id: false }
+);
 
 const medicalDocumentSchema = new Schema<IMedicalDocument>(
   {
@@ -82,6 +128,18 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
       trim: true,
     },
     blockchainRegisteredAt: Date,
+    uploadedByLab: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    labName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
+    testName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
+    nablCertNumber: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
+    authorizingDoctorName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
+    hospitalName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
+    reportDate: Date,
+    testValues: { type: [testValueSchema], default: undefined },
   },
   {
     timestamps: true,
@@ -91,5 +149,6 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
 
 medicalDocumentSchema.index({ uploadedBy: 1, createdAt: -1 });
 medicalDocumentSchema.index({ sharedWithDoctors: 1, createdAt: -1 });
+medicalDocumentSchema.index({ uploadedByLab: 1, createdAt: -1 });
 
 export const MedicalDocument = mongoose.model<IMedicalDocument>('MedicalDocument', medicalDocumentSchema);

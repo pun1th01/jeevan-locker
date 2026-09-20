@@ -7,6 +7,7 @@ import RegisterPage from './pages/auth/RegisterPage';
 import AdminDashboard from './pages/dashboard/AdminDashboard';
 import DashboardRedirect from './pages/dashboard/DashboardRedirect';
 import DoctorDashboard from './pages/dashboard/DoctorDashboard';
+import LabDashboard from './pages/dashboard/LabDashboard';
 import PatientDashboard from './pages/dashboard/PatientDashboard';
 import Landing from './pages/Landing';
 
@@ -48,6 +49,14 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="dashboard/lab"
+              element={
+                <ProtectedRoute allowedRoles={['lab']}>
+                  <LabDashboard />
                 </ProtectedRoute>
               }
             />

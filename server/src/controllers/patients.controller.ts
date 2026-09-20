@@ -3,11 +3,16 @@ import { Types } from 'mongoose';
 import { ConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess } from '../models/EmergencyAccess';
 import { MedicalDocument } from '../models/MedicalDocument';
-import { User } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
-import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { expireEmergencyAccesses } from '../utils/emergencyAccess.util';
+import {
+  auditPatientLookup,
+  findPatientByQuery,
+  LOOKUP_QUERY_REQUIRED_MESSAGE,
+  PATIENT_NOT_FOUND_MESSAGE,
+  readLookupQuery,
+} from '../utils/patientLookup.util';
 
 /**
  * Relationship between the calling doctor and one document. Exactly one value per document,
@@ -30,20 +35,6 @@ export interface PatientLookupResult {
   documents: PatientLookupDocument[];
 }
 
-const MAX_LOOKUP_QUERY_LENGTH = 254;
-const objectIdPattern = /^[a-f0-9]{24}$/i;
-
-const getQueryString = (value: unknown): string => {
-  if (typeof value === 'string') {
-    return value.trim();
-  }
-
-  if (Array.isArray(value) && typeof value[0] === 'string') {
-    return value[0].trim();
-  }
-
-  return '';
-};
 
 const resolvePatientAccess = async (
   doctorId: string,
@@ -106,10 +97,9 @@ const resolvePatientAccess = async (
 
   return accessByDocument;
 };
-
 /**
  * GET /api/patients/lookup?query=<email | ObjectId>
- * Exact match only — never a prefix or regex search — so a doctor cannot enumerate patients.
+ * Exact match only, via the shared rule in utils/patientLookup.util.ts (also used by POST /lab-links).
  * Every evaluated lookup is audited as PATIENT_LOOKUP, whether or not a patient was found.
  * The 404 is identical for "no such user" and "user exists but is not a patient" on purpose.
  */
@@ -121,37 +111,21 @@ export const lookupPatient: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
-  const rawQuery = getQueryString(req.query.query);
+  const outcome = await findPatientByQuery(readLookupQuery(req.query.query));
 
-  if (!rawQuery || rawQuery.length > MAX_LOOKUP_QUERY_LENGTH) {
-    res.status(400).json({ message: 'A patient email or ID is required' });
+  if (outcome.kind === 'invalid') {
+    res.status(400).json({ message: LOOKUP_QUERY_REQUIRED_MESSAGE });
     return;
   }
 
-  const matchedBy: 'id' | 'email' = objectIdPattern.test(rawQuery) ? 'id' : 'email';
-  const normalizedQuery = matchedBy === 'email' ? rawQuery.toLowerCase() : rawQuery;
-  const patient = await User.findOne(
-    matchedBy === 'id' ? { _id: normalizedQuery, role: 'patient' } : { email: normalizedQuery, role: 'patient' }
-  ).select('name');
+  await auditPatientLookup(req, doctor.id, outcome);
 
-  // `query` is stored as typed (normalized), so patient emails appear in the admin audit feed. That is
-  // deliberate: the audit trail must show exactly whom a doctor searched for. Do not mask or hash it.
-  await createAuditLog({
-    userId: doctor.id,
-    action: 'PATIENT_LOOKUP',
-    ipAddress: getRequestIpAddress(req),
-    metadata: {
-      query: normalizedQuery,
-      matchedBy,
-      found: String(Boolean(patient)),
-      ...(patient ? { patientId: patient._id.toString() } : {}),
-    },
-  });
-
-  if (!patient) {
-    res.status(404).json({ message: 'No patient found for that email or ID' });
+  if (outcome.kind === 'not_found') {
+    res.status(404).json({ message: PATIENT_NOT_FOUND_MESSAGE });
     return;
   }
+
+  const { patient } = outcome;
 
   const documents = await MedicalDocument.find({ uploadedBy: patient._id })
     .sort({ createdAt: -1 })

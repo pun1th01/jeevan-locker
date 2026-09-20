@@ -57,6 +57,7 @@ const actionLabels: Record<AuditAction, string> = {
   NOTIFICATION_SENT: 'Notification sent',
   ADMIN_CREATED: 'Admin created',
   DOCTOR_VERIFIED: 'Doctor verified',
+  LAB_CREATED: 'Lab created',
 };
 
 const actionStyles: Record<AuditAction, string> = {
@@ -86,6 +87,7 @@ const actionStyles: Record<AuditAction, string> = {
   NOTIFICATION_SENT: 'bg-slate-300/10 text-slate-200',
   ADMIN_CREATED: 'bg-violet-300/10 text-violet-100',
   DOCTOR_VERIFIED: 'bg-emerald-300/10 text-emerald-100',
+  LAB_CREATED: 'bg-violet-300/10 text-violet-100',
 };
 
 const actionDescriptions: Record<AuditAction, string> = {
@@ -115,6 +117,7 @@ const actionDescriptions: Record<AuditAction, string> = {
   NOTIFICATION_SENT: 'In-app notification delivered',
   ADMIN_CREATED: 'Administrator account created',
   DOCTOR_VERIFIED: 'Admin verified a doctor account',
+  LAB_CREATED: 'Admin provisioned a lab account',
 };
 
 const formatDateTime = (value: string) =>
@@ -153,6 +156,7 @@ const actionIcons: Record<AuditAction, typeof Eye> = {
   NOTIFICATION_SENT: Bell,
   ADMIN_CREATED: UserPlus,
   DOCTOR_VERIFIED: BadgeCheck,
+  LAB_CREATED: FlaskConical,
 };
 
 const AuditActionIcon = ({ action }: { action: AuditAction }) => {

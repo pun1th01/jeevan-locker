@@ -9,6 +9,7 @@ export const toSafeUser = (user: IUser): SafeUser => ({
   email: user.email,
   role: user.role,
   verified: user.verified,
+  ...(user.organisation ? { organisation: user.organisation } : {}),
   createdAt: user.createdAt.toISOString(),
 });
 

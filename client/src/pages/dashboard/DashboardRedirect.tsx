@@ -6,6 +6,7 @@ const dashboardPathByRole: Record<UserRole, string> = {
   patient: '/dashboard/patient',
   doctor: '/dashboard/doctor',
   admin: '/dashboard/admin',
+  lab: '/dashboard/lab',
 };
 
 export default function DashboardRedirect() {

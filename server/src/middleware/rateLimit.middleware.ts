@@ -50,3 +50,13 @@ export const patientLookupRateLimiter = rateLimit({
   keyGenerator: userKey,
   handler: tooManyRequests('Too many patient lookups. Try again later.'),
 });
+
+/** POST /lab-links — 30 link requests (each is a patient lookup) per lab per 15 minutes; mount AFTER verifyToken. */
+export const labLinkRateLimiter = rateLimit({
+  windowMs: 15 * MINUTE_MS,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: userKey,
+  handler: tooManyRequests('Too many patient lookups. Try again later.'),
+});

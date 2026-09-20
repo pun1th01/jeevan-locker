@@ -99,16 +99,18 @@ For immediate testing, development-only seeded accounts are initialized on start
 | **Admin** | `admin@jeevanlocker.dev` | `Admin123!` |
 | **Doctor** | `doctor@jeevanlocker.dev` | `Doctor123!` |
 | **Patient** | `patient@jeevanlocker.dev` | `Patient123!` |
+| **Lab** | `lab@jeevanlocker.dev` | `Lab123!!` |
 
 *(Note: These accounts only seed when `NODE_ENV=development`)*
 
-### Creating an admin
+### Creating an admin or a lab
 
-Admins **cannot self-register** — `POST /api/auth/register` only accepts `patient` or `doctor`, and this stays CLI-only permanently. Provision one with:
+Admins and labs **cannot self-register** — `POST /api/auth/register` only accepts `patient` or `doctor`. Admin creation stays CLI-only permanently; labs can be created from the CLI or by an admin via `POST /api/admin/users` (see `docs/API_ADMIN.md`).
 
 ```bash
 cd server
 npm run create:admin -- --name "Ops Admin" --email ops@example.com --password 'Str0ngPass!'
+npm run create:lab   -- --name "City Diagnostics" --email lab@example.com --password 'Str0ngPass!' --organisation "City Diagnostics Pvt Ltd"
 ```
 
 The script connects **directly to `MONGO_URI`** and prints which database it reached. It deliberately bypasses the in-memory MongoDB that `npm run dev` spins up in development, because anything written there vanishes when that process exits. So:
@@ -117,7 +119,7 @@ The script connects **directly to `MONGO_URI`** and prints which database it rea
 * The API must also be pointed at that same real database (not the in-memory fallback) for the new admin to be able to log in. In development the in-memory swap triggers whenever `MONGO_URI` contains `127.0.0.1` — see `server/src/config/db.ts`.
 * For the demo flow you don't need this at all: `admin@jeevanlocker.dev` is seeded automatically.
 
-Every run writes an `ADMIN_CREATED` audit row (IP recorded as `cli`) that shows up in the admin dashboard.
+Every run writes an `ADMIN_CREATED` or `LAB_CREATED` audit row (IP recorded as `cli`) that shows up in the admin dashboard. Provisioned accounts are `verified` by definition.
 
 ---
 

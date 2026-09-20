@@ -17,6 +17,7 @@ interface DemoAccount {
   role: UserRole;
   /** Demo doctors are pre-verified so the demo flow never hits the verification gate. */
   verified?: boolean;
+  organisation?: string;
 }
 
 interface DemoDocumentSeed {
@@ -76,6 +77,14 @@ const demoAccounts: DemoAccount[] = [
     email: 'patient2@jeevanlocker.dev',
     password: 'Patient123!',
     role: 'patient',
+  },
+  {
+    name: 'Thyrocare Diagnostics',
+    email: 'lab@jeevanlocker.dev',
+    password: 'Lab123!!',
+    role: 'lab',
+    verified: true,
+    organisation: 'Thyrocare Technologies Ltd',
   },
 ];
 
@@ -671,6 +680,7 @@ const ensureDemoAccount = async (account: DemoAccount): Promise<IUser> => {
       password: account.password,
       role: account.role,
       verified,
+      ...(account.organisation ? { organisation: account.organisation } : {}),
     });
   }
 
@@ -688,6 +698,11 @@ const ensureDemoAccount = async (account: DemoAccount): Promise<IUser> => {
 
   if (existingUser.verified !== verified) {
     existingUser.verified = verified;
+    changed = true;
+  }
+
+  if (account.organisation && existingUser.organisation !== account.organisation) {
+    existingUser.organisation = account.organisation;
     changed = true;
   }
 

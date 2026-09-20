@@ -1,11 +1,12 @@
 import { createReadStream } from 'fs';
-import { stat, unlink } from 'fs/promises';
+import { stat } from 'fs/promises';
 import path from 'path';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { Types } from 'mongoose';
 import {
   MedicalDocument,
   type IMedicalDocument,
+  type ITestValue,
   type MedicalDocumentMimeType,
 } from '../models/MedicalDocument';
 import { EmergencyAccess } from '../models/EmergencyAccess';
@@ -18,10 +19,13 @@ import { toSafeUser } from '../utils/auth.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
 import { findApprovedConsent } from '../utils/consent.util';
-import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
+import { UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 import { calculateFileSha256, SHA_256 } from '../utils/documentHash.util';
-import { detectDocumentMimeType } from '../utils/fileSignature.util';
-import { getRegisteredDocumentHash, registerDocumentHash } from '../services/documentRegistry.service';
+import { getRegisteredDocumentHash } from '../services/documentRegistry.service';
+import { DocumentIngestError, discardUploadedFile, ingestUploadedDocument } from '../services/documentIngest.service';
+
+/** Projection for every populated user reference in document responses. Must cover everything SafeUser needs. */
+export const USER_REFERENCE_FIELDS = 'name email role verified organisation createdAt';
 
 interface PopulatedUserReference {
   _id: Types.ObjectId;
@@ -29,16 +33,22 @@ interface PopulatedUserReference {
   email: string;
   role: UserRole;
   verified: boolean;
+  organisation?: string;
   createdAt: Date;
 }
 
-type DocumentWithUsers = Omit<IMedicalDocument, 'uploadedBy' | 'sharedWithDoctors'> & {
+type DocumentWithUsers = Omit<IMedicalDocument, 'uploadedBy' | 'sharedWithDoctors' | 'uploadedByLab'> & {
   uploadedBy: Types.ObjectId | PopulatedUserReference;
   sharedWithDoctors: Array<Types.ObjectId | PopulatedUserReference>;
+  uploadedByLab?: Types.ObjectId | PopulatedUserReference;
 };
 
-/** Wire shape for a document. Storage details (storedFileName, filePath) are server-internal and never serialized. */
-interface MedicalDocumentResponse {
+/**
+ * Wire shape for a document. Storage details (storedFileName, filePath) are server-internal and never serialized.
+ * Lab-report fields are flat and optional, mirroring the model; `uploadedByLab` being present is what marks a
+ * verified lab report. Mirrored by MedicalDocument in client/src/types/document.ts.
+ */
+export interface MedicalDocumentResponse {
   id: string;
   title: string;
   originalFileName: string;
@@ -49,6 +59,14 @@ interface MedicalDocumentResponse {
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
+  uploadedByLab?: SafeUser;
+  labName?: string;
+  testName?: string;
+  nablCertNumber?: string;
+  authorizingDoctorName?: string;
+  hospitalName?: string;
+  reportDate?: string;
+  testValues?: ITestValue[];
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +88,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
       email: user.email,
       role: user.role,
       verified: Boolean(user.verified),
+      ...(user.organisation ? { organisation: user.organisation } : {}),
       createdAt: user.createdAt.toISOString(),
     };
   }
@@ -84,7 +103,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
   };
 };
 
-const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentResponse => {
+export const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentResponse => {
   const documentWithUsers = document as DocumentWithUsers;
 
   return {
@@ -98,15 +117,47 @@ const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentRe
     hashAlgorithm: document.hashAlgorithm,
     blockchainTxHash: document.blockchainTxHash,
     blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
+    ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers) : {}),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
 };
 
-const populateDocumentUsers = async (document: IMedicalDocument): Promise<IMedicalDocument> => {
+type LabReportDocument = DocumentWithUsers & { uploadedByLab: Types.ObjectId | PopulatedUserReference };
+
+const isLabReport = (document: DocumentWithUsers): document is LabReportDocument => document.uploadedByLab !== undefined && document.uploadedByLab !== null;
+
+/** Report fields are emitted only when a lab issued the document; bounds are omitted when unset. */
+const serializeLabReportFields = (
+  document: LabReportDocument
+): Pick<
+  MedicalDocumentResponse,
+  'uploadedByLab' | 'labName' | 'testName' | 'nablCertNumber' | 'authorizingDoctorName' | 'hospitalName' | 'reportDate' | 'testValues'
+> => ({
+  uploadedByLab: serializeUserReference(document.uploadedByLab),
+  labName: document.labName,
+  testName: document.testName,
+  nablCertNumber: document.nablCertNumber,
+  authorizingDoctorName: document.authorizingDoctorName,
+  hospitalName: document.hospitalName,
+  reportDate: document.reportDate?.toISOString(),
+  testValues: document.testValues?.map((testValue) => ({
+    name: testValue.name,
+    value: testValue.value,
+    unit: testValue.unit,
+    ...(testValue.refLow !== undefined ? { refLow: testValue.refLow } : {}),
+    ...(testValue.refHigh !== undefined ? { refHigh: testValue.refHigh } : {}),
+    ...(testValue.criticalLow !== undefined ? { criticalLow: testValue.criticalLow } : {}),
+    ...(testValue.criticalHigh !== undefined ? { criticalHigh: testValue.criticalHigh } : {}),
+    flag: testValue.flag,
+  })),
+});
+
+export const populateDocumentUsers = async (document: IMedicalDocument): Promise<IMedicalDocument> => {
   await document.populate([
-    { path: 'uploadedBy', select: 'name email role verified createdAt' },
-    { path: 'sharedWithDoctors', select: 'name email role verified createdAt' },
+    { path: 'uploadedBy', select: USER_REFERENCE_FIELDS },
+    { path: 'sharedWithDoctors', select: USER_REFERENCE_FIELDS },
+    { path: 'uploadedByLab', select: USER_REFERENCE_FIELDS },
   ]);
 
   return document;
@@ -121,39 +172,60 @@ interface DocumentAccessDecision {
   emergencyExpiresAt?: string;
 }
 
+/** Compile-time exhaustiveness guard: adding a role to USER_ROLES without a branch below is a type error. */
+const assertRoleHandled = (role: never): never => {
+  throw new Error(`Unhandled user role: ${String(role)}`);
+};
+
+/**
+ * The single read-access rule for a document. Every branch is explicit and the tail denies, so a new role
+ * can never inherit another role's permissions by falling through.
+ *   admin   -> everything
+ *   patient -> only documents they own (uploadedBy), lab reports included
+ *   lab     -> only reports it issued (uploadedByLab); unaffected by later link revocation
+ *   doctor  -> direct share, approved consent, or a live break-glass grant, in that precedence
+ */
 const getDocumentAccessDecision = async (
   user: SafeUser,
   document: IMedicalDocument
 ): Promise<DocumentAccessDecision> => {
-  if (user.role === 'admin') {
-    return { allowed: true };
+  switch (user.role) {
+    case 'admin':
+      return { allowed: true };
+
+    case 'patient':
+      return { allowed: document.uploadedBy.toString() === user.id };
+
+    case 'lab':
+      return { allowed: document.uploadedByLab?.toString() === user.id };
+
+    case 'doctor': {
+      if (document.sharedWithDoctors.some((doctorId) => doctorId.toString() === user.id)) {
+        return { allowed: true };
+      }
+
+      const approvedConsent = await findApprovedConsent(user.id, document._id);
+
+      if (approvedConsent) {
+        return { allowed: true, consentGrantId: approvedConsent._id.toString() };
+      }
+
+      const emergencyAccess = await findActiveEmergencyAccess(user.id, document._id);
+
+      if (!emergencyAccess) {
+        return { allowed: false };
+      }
+
+      return {
+        allowed: true,
+        emergencyAccessId: emergencyAccess._id.toString(),
+        emergencyExpiresAt: emergencyAccess.expiresAt.toISOString(),
+      };
+    }
+
+    default:
+      return assertRoleHandled(user.role);
   }
-
-  if (user.role === 'patient') {
-    return { allowed: document.uploadedBy.toString() === user.id };
-  }
-
-  if (document.sharedWithDoctors.some((doctorId) => doctorId.toString() === user.id)) {
-    return { allowed: true };
-  }
-
-  const approvedConsent = await findApprovedConsent(user.id, document._id);
-
-  if (approvedConsent) {
-    return { allowed: true, consentGrantId: approvedConsent._id.toString() };
-  }
-
-  const emergencyAccess = await findActiveEmergencyAccess(user.id, document._id);
-
-  if (!emergencyAccess) {
-    return { allowed: false };
-  }
-
-  return {
-    allowed: true,
-    emergencyAccessId: emergencyAccess._id.toString(),
-    emergencyExpiresAt: emergencyAccess.expiresAt.toISOString(),
-  };
 };
 
 const getDocumentAccessAuditMetadata = (
@@ -176,13 +248,6 @@ const getDocumentAccessAuditMetadata = (
   return undefined;
 };
 
-const removeUploadedFile = async (filePath: string) => {
-  try {
-    await unlink(filePath);
-  } catch {
-    // A failed cleanup should not hide the request validation or database error.
-  }
-};
 
 const getDocumentByValidatedId = async (documentId: string) => {
   if (!Types.ObjectId.isValid(documentId)) {
@@ -308,50 +373,22 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
   const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
 
   if (!title) {
-    await removeUploadedFile(file.path);
+    await discardUploadedFile(file.path);
     res.status(400).json({ message: 'Document title is required' });
     return;
   }
 
-  // Multer's fileFilter only sees the client-declared MIME type; the bytes on disk are the truth.
-  const detectedMimeType = await detectDocumentMimeType(file.path);
-
-  if (detectedMimeType !== file.mimetype) {
-    await removeUploadedFile(file.path);
-    res.status(400).json({ message: 'File content does not match its declared type' });
-    return;
-  }
-
-  const documentHash = await calculateFileSha256(file.path);
   let document: IMedicalDocument;
 
   try {
-    document = await MedicalDocument.create({
-      title,
-      originalFileName: file.originalname,
-      storedFileName: file.filename,
-      filePath: getStoredDocumentPath(file.filename),
-      mimeType: file.mimetype as MedicalDocumentMimeType,
-      uploadedBy: user.id,
-      sharedWithDoctors: [],
-      documentHash,
-      hashAlgorithm: SHA_256,
-    });
+    // Magic-byte check, hash, DB row, chain registration — with unlink/rollback on every failure.
+    document = await ingestUploadedDocument({ file, title, uploadedBy: user.id });
   } catch (error) {
-    await removeUploadedFile(file.path);
-    throw error;
-  }
+    if (error instanceof DocumentIngestError) {
+      res.status(error.statusCode).json({ message: error.message });
+      return;
+    }
 
-  try {
-    const blockchainDocumentId = document._id.toString();
-    const registration = await registerDocumentHash(blockchainDocumentId, documentHash);
-    document.blockchainDocumentId = blockchainDocumentId;
-    document.blockchainTxHash = registration.transactionHash;
-    document.blockchainRegisteredAt = registration.registeredAt;
-    await document.save();
-  } catch (error) {
-    await MedicalDocument.findByIdAndDelete(document._id);
-    await removeUploadedFile(file.path);
     throw error;
   }
 
@@ -366,6 +403,43 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
   res.status(201).json({ document: serializeMedicalDocument(populatedDocument) });
 });
 
+/**
+ * Builds the list filter for GET /documents/my-documents. Mirrors getDocumentAccessDecision branch for branch:
+ * anything this returns must also be allowed by that function, and vice versa.
+ */
+const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unknown>> => {
+  switch (user.role) {
+    case 'admin':
+      return {};
+
+    case 'patient':
+      return { uploadedBy: user.id };
+
+    case 'lab':
+      return { uploadedByLab: user.id };
+
+    case 'doctor': {
+      await expireEmergencyAccesses(user.id);
+
+      const [activeEmergencyAccesses, approvedConsents] = await Promise.all([
+        EmergencyAccess.find({ doctorId: user.id, status: 'ACTIVE', expiresAt: { $gt: new Date() } }).select('documentId'),
+        ConsentGrant.find({ doctorId: user.id, status: 'APPROVED' }).select('documentId'),
+      ]);
+
+      return {
+        $or: [
+          { sharedWithDoctors: user.id },
+          { _id: { $in: approvedConsents.map((consent) => consent.documentId) } },
+          { _id: { $in: activeEmergencyAccesses.map((emergencyAccess) => emergencyAccess.documentId) } },
+        ],
+      };
+    }
+
+    default:
+      return assertRoleHandled(user.role);
+  }
+};
+
 export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
   const user = validateAuthenticatedUser(req as AuthenticatedRequest);
 
@@ -374,35 +448,11 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
-  let query: Record<string, unknown>;
-
-  if (user.role === 'admin') {
-    query = {};
-  } else if (user.role === 'doctor') {
-    await expireEmergencyAccesses(user.id);
-
-    const activeEmergencyAccesses = await EmergencyAccess.find({
-      doctorId: user.id,
-      status: 'ACTIVE',
-      expiresAt: { $gt: new Date() },
-    }).select('documentId');
-    const approvedConsents = await ConsentGrant.find({ doctorId: user.id, status: 'APPROVED' }).select('documentId');
-
-    query = {
-      $or: [
-        { sharedWithDoctors: user.id },
-        { _id: { $in: approvedConsents.map((consent) => consent.documentId) } },
-        { _id: { $in: activeEmergencyAccesses.map((emergencyAccess) => emergencyAccess.documentId) } },
-      ],
-    };
-  } else {
-    query = { uploadedBy: user.id };
-  }
-
-  const documents = await MedicalDocument.find(query)
+  const documents = await MedicalDocument.find(await getMyDocumentsFilter(user))
     .sort({ createdAt: -1 })
-    .populate('uploadedBy', 'name email role verified createdAt')
-    .populate('sharedWithDoctors', 'name email role verified createdAt');
+    .populate('uploadedBy', USER_REFERENCE_FIELDS)
+    .populate('sharedWithDoctors', USER_REFERENCE_FIELDS)
+    .populate('uploadedByLab', USER_REFERENCE_FIELDS);
 
   res.json({ documents: documents.map(serializeMedicalDocument) });
 });

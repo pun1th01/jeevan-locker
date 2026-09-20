@@ -5,7 +5,7 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { toSafeUser } from '../utils/auth.util';
-import { isUserRole } from '../utils/validation.util';
+import { isUserRole, validateLabUserInput } from '../utils/validation.util';
 
 const getIdParam = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] ?? '' : value ?? '');
 const getQueryString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -21,7 +21,7 @@ export const listUsers: RequestHandler = asyncHandler(async (req, res) => {
 
   if (role) {
     if (!isUserRole(role)) {
-      res.status(400).json({ message: 'role must be one of patient, doctor, admin' });
+      res.status(400).json({ message: 'role must be one of patient, doctor, admin, lab' });
       return;
     }
 
@@ -88,4 +88,54 @@ export const verifyDoctor: RequestHandler = asyncHandler(async (req, res) => {
   });
 
   res.json({ message: 'Doctor verified', user: toSafeUser(user) });
+});
+
+/**
+ * POST /api/admin/users
+ * Creates LAB accounts only. Admin creation is CLI-only, permanently (`npm run create:admin`) — a compromised
+ * admin session must not be able to mint further admins. A `role` other than 'lab' in the body is a 400,
+ * not silently coerced, so a client that assumed this was a general user-creation endpoint fails loudly.
+ */
+export const createLabUser: RequestHandler = asyncHandler(async (req, res) => {
+  const admin = (req as AuthenticatedRequest).user;
+
+  if (!admin) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  if (body.role !== undefined && body.role !== 'lab') {
+    res.status(400).json({ message: 'This endpoint creates lab accounts only' });
+    return;
+  }
+
+  const validation = validateLabUserInput(body);
+
+  if (!validation.data) {
+    res.status(400).json({ message: 'Validation failed', errors: validation.errors });
+    return;
+  }
+
+  if (await User.exists({ email: validation.data.email })) {
+    res.status(409).json({ message: 'A user with this email already exists' });
+    return;
+  }
+
+  const lab = await User.create({
+    ...validation.data,
+    role: 'lab',
+    // Labs are admin-provisioned, so they are verified by definition.
+    verified: true,
+  });
+
+  await createAuditLog({
+    userId: admin.id,
+    action: 'LAB_CREATED',
+    ipAddress: getRequestIpAddress(req),
+    metadata: { labId: lab._id.toString(), labEmail: lab.email, organisation: lab.organisation ?? '' },
+  });
+
+  res.status(201).json({ user: toSafeUser(lab) });
 });

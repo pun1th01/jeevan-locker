@@ -9,6 +9,7 @@ export interface IUser extends Document {
   password: string;
   role: UserRole;
   verified: boolean;
+  organisation?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -49,6 +50,12 @@ const userSchema = new Schema<IUser, UserModel>(
     verified: {
       type: Boolean,
       default: false,
+    },
+    organisation: {
+      type: String,
+      trim: true,
+      minlength: 2,
+      maxlength: 120,
     },
   },
   {

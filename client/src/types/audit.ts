@@ -27,7 +27,8 @@ export type AuditAction =
   | 'LAB_REPORT_UPLOADED'
   | 'NOTIFICATION_SENT'
   | 'ADMIN_CREATED'
-  | 'DOCTOR_VERIFIED';
+  | 'DOCTOR_VERIFIED'
+  | 'LAB_CREATED';
 
 export interface AuditDocumentSummary {
   id: string;

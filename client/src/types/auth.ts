@@ -1,7 +1,7 @@
-export type UserRole = 'patient' | 'doctor' | 'admin';
+export type UserRole = 'patient' | 'doctor' | 'admin' | 'lab';
 
-/** Roles a user can pick on the register page. Admins are provisioned server-side only. */
-export type RegistrableRole = Exclude<UserRole, 'admin'>;
+/** Roles a user can pick on the register page. Admins (CLI) and labs (admin endpoint) are provisioned server-side only. */
+export type RegistrableRole = Exclude<UserRole, 'admin' | 'lab'>;
 
 export interface User {
   id: string;
@@ -10,6 +10,8 @@ export interface User {
   role: UserRole;
   /** Admin-verified. Unverified doctors cannot look up patients, request consent, or break-glass. */
   verified: boolean;
+  /** Hospital / organisation affiliation. Optional for doctors, required for labs, absent otherwise. */
+  organisation?: string;
   createdAt: string;
 }
 
