@@ -61,3 +61,20 @@ export const getAnchor = async (recordKey: string): Promise<OnChainAnchor | null
 
   return { digest: digest.slice(2).toLowerCase(), timestamp: new Date(Number(timestamp) * 1000), anchoredBy };
 };
+
+export interface AnchoredEventLocation {
+  transactionHash: string;
+  blockNumber: number;
+}
+
+/**
+ * Finds the Anchored event for a key by scanning the log index (the key is an indexed topic). Used when
+ * the worker learns a key is already on-chain — it sent the transaction and died before recording it.
+ */
+export const findAnchoredEvent = async (recordKey: string): Promise<AnchoredEventLocation | null> => {
+  const { contract } = getAnchorRegistry();
+  const events = await contract.queryFilter(contract.filters.Anchored(anchorKeyFor(recordKey)), 0, 'latest');
+  const first = events[0];
+
+  return first ? { transactionHash: first.transactionHash, blockNumber: first.blockNumber } : null;
+};

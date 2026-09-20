@@ -8,6 +8,8 @@ import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { findApprovedConsent } from '../utils/consent.util';
 import { emitAppEvent, eventBase } from '../events/appEvents';
+import { enqueueEmergencyAnchor } from '../services/anchorQueue.service';
+import { serializeAnchorReferences } from '../utils/anchors.util';
 import {
   EMERGENCY_ACCESS_DURATION_MS,
   EMERGENCY_ACCESS_DURATION_MINUTES,
@@ -23,6 +25,7 @@ interface EmergencyAccessResponse {
   status: 'ACTIVE' | 'EXPIRED';
   createdAt: string;
   expiresAt: string;
+  anchors?: Record<string, { digest: string; txHash: string; blockNumber: number; anchoredAt: string }>;
 }
 
 const getAuthenticatedDoctor = (req: AuthenticatedRequest) => req.user ?? null;
@@ -36,6 +39,7 @@ const serializeEmergencyAccess = (emergencyAccess: IEmergencyAccess): EmergencyA
   status: emergencyAccess.status,
   createdAt: emergencyAccess.createdAt.toISOString(),
   expiresAt: emergencyAccess.expiresAt.toISOString(),
+  anchors: serializeAnchorReferences(emergencyAccess.anchors),
 });
 
 const getRequestString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
@@ -132,6 +136,8 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
       expiresAt: expiresAt.toISOString(),
     },
   });
+
+  await enqueueEmergencyAnchor(emergencyAccess, document.documentHash ?? null);
 
   // Only a NEW grant notifies; the "already active" path above returns without emitting.
   emitAppEvent('emergency.granted', {

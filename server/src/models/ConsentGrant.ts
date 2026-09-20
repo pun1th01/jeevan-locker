@@ -4,6 +4,24 @@ export const CONSENT_STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'REVOKED'] a
 
 export type ConsentStatus = (typeof CONSENT_STATUSES)[number];
 
+/** Proof that one event of this record is on-chain. Written once by the anchor worker; see docs/ANCHORING.md. */
+export interface AnchorReference {
+  digest: string;
+  txHash: string;
+  blockNumber: number;
+  anchoredAt: Date;
+}
+
+export const anchorReferenceSchema = new Schema<AnchorReference>(
+  {
+    digest: { type: String, required: true },
+    txHash: { type: String, required: true },
+    blockNumber: { type: Number, required: true },
+    anchoredAt: { type: Date, required: true },
+  },
+  { _id: false }
+);
+
 export interface IConsentGrant extends Document {
   _id: Types.ObjectId;
   patientId: Types.ObjectId;
@@ -15,6 +33,13 @@ export interface IConsentGrant extends Document {
   approvedAt?: Date;
   rejectedAt?: Date;
   revokedAt?: Date;
+  /** Denormalized on-chain proofs, keyed by event; the ChainAnchor collection is the full ledger. */
+  anchors?: {
+    requested?: AnchorReference;
+    approved?: AnchorReference;
+    rejected?: AnchorReference;
+    revoked?: AnchorReference;
+  };
 }
 
 const consentGrantSchema = new Schema<IConsentGrant>(
@@ -28,6 +53,18 @@ const consentGrantSchema = new Schema<IConsentGrant>(
     approvedAt: { type: Date, default: undefined },
     rejectedAt: { type: Date, default: undefined },
     revokedAt: { type: Date, default: undefined },
+    anchors: {
+      type: new Schema(
+        {
+          requested: { type: anchorReferenceSchema, default: undefined },
+          approved: { type: anchorReferenceSchema, default: undefined },
+          rejected: { type: anchorReferenceSchema, default: undefined },
+          revoked: { type: anchorReferenceSchema, default: undefined },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
   },
   { versionKey: false }
 );

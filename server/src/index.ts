@@ -2,6 +2,8 @@ import { app } from './app';
 import { connectDB } from './config/db';
 import { env } from './config/env';
 import { registerAppEventListeners } from './events/registerListeners';
+import { reconcileMissingAnchors } from './services/anchorQueue.service';
+import { startAnchorWorker, stopAnchorWorker } from './services/anchorWorker.service';
 import { verifyChainContractsAtBoot } from './services/chain.service';
 import { seedDemoUsers } from './utils/seedDemoUsers';
 
@@ -11,6 +13,9 @@ const startServer = async () => {
   // chain is unconfigured or unreachable. See chain.service.ts.
   await verifyChainContractsAtBoot();
   registerAppEventListeners();
+  // Re-derive any anchor rows lost between an audit write and its enqueue, then start draining.
+  await reconcileMissingAnchors();
+  startAnchorWorker();
   
   if (env.nodeEnv === 'development') {
     await seedDemoUsers();
@@ -20,6 +25,13 @@ const startServer = async () => {
     console.log(`JeevanLocker API running on port ${env.port}`);
   });
 };
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    stopAnchorWorker();
+    process.exit(0);
+  });
+}
 
 startServer().catch((error) => {
   const message = error instanceof Error ? error.message : 'Unknown startup error';

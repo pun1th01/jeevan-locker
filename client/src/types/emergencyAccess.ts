@@ -1,3 +1,5 @@
+import type { AnchorReference } from './consent';
+
 export type EmergencyAccessStatus = 'ACTIVE' | 'EXPIRED';
 
 export interface EmergencyAccess {
@@ -9,6 +11,8 @@ export interface EmergencyAccess {
   status: EmergencyAccessStatus;
   createdAt: string;
   expiresAt: string;
+  /** Present once the grant is on-chain. */
+  anchors?: { granted?: AnchorReference };
 }
 
 export interface GrantEmergencyAccessInput {

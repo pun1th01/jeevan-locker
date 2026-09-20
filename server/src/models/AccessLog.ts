@@ -35,6 +35,7 @@ export const AUDIT_ACTIONS = [
   'ADMIN_CREATED',
   'DOCTOR_VERIFIED',
   'LAB_CREATED',
+  'CHAIN_ANCHOR_FAILED',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

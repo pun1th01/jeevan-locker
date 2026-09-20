@@ -60,6 +60,7 @@ const actionLabels: Record<AuditAction, string> = {
   ADMIN_CREATED: 'Admin created',
   DOCTOR_VERIFIED: 'Doctor verified',
   LAB_CREATED: 'Lab created',
+  CHAIN_ANCHOR_FAILED: 'On-chain anchor FAILED',
 };
 
 const actionStyles: Record<AuditAction, string> = {
@@ -91,6 +92,7 @@ const actionStyles: Record<AuditAction, string> = {
   ADMIN_CREATED: 'bg-violet-300/10 text-violet-100',
   DOCTOR_VERIFIED: 'bg-emerald-300/10 text-emerald-100',
   LAB_CREATED: 'bg-violet-300/10 text-violet-100',
+  CHAIN_ANCHOR_FAILED: 'bg-rose-500/20 text-rose-100',
 };
 
 const actionDescriptions: Record<AuditAction, string> = {
@@ -122,6 +124,7 @@ const actionDescriptions: Record<AuditAction, string> = {
   ADMIN_CREATED: 'Administrator account created',
   DOCTOR_VERIFIED: 'Admin verified a doctor account',
   LAB_CREATED: 'Admin provisioned a lab account',
+  CHAIN_ANCHOR_FAILED: 'Audit event could not be anchored on-chain after the retry cap — needs attention',
 };
 
 const formatDateTime = (value: string) =>
@@ -162,6 +165,7 @@ const actionIcons: Record<AuditAction, typeof Eye> = {
   ADMIN_CREATED: UserPlus,
   DOCTOR_VERIFIED: BadgeCheck,
   LAB_CREATED: FlaskConical,
+  CHAIN_ANCHOR_FAILED: Link2Off,
 };
 
 const AuditActionIcon = ({ action }: { action: AuditAction }) => {

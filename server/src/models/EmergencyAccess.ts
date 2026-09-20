@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { anchorReferenceSchema, type AnchorReference } from './ConsentGrant';
 
 export const EMERGENCY_ACCESS_STATUSES = ['ACTIVE', 'EXPIRED'] as const;
 
@@ -13,6 +14,8 @@ export interface IEmergencyAccess extends Document {
   status: EmergencyAccessStatus;
   createdAt: Date;
   expiresAt: Date;
+  /** Denormalized on-chain proof of the grant; the ChainAnchor collection is the full ledger. */
+  anchors?: { granted?: AnchorReference };
 }
 
 const emergencyAccessSchema = new Schema<IEmergencyAccess>(
@@ -52,6 +55,10 @@ const emergencyAccessSchema = new Schema<IEmergencyAccess>(
       type: Date,
       required: true,
       index: true,
+    },
+    anchors: {
+      type: new Schema({ granted: { type: anchorReferenceSchema, default: undefined } }, { _id: false }),
+      default: undefined,
     },
   },
   {

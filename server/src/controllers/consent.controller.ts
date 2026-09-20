@@ -7,6 +7,8 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { emitAppEvent, eventBase } from '../events/appEvents';
+import { enqueueConsentAnchor } from '../services/anchorQueue.service';
+import { serializeAnchorReferences } from '../utils/anchors.util';
 
 interface PopulatedUser {
   _id: Types.ObjectId;
@@ -49,6 +51,7 @@ const serializeConsent = (consent: IConsentGrant) => {
     approvedAt: consent.approvedAt?.toISOString(),
     rejectedAt: consent.rejectedAt?.toISOString(),
     revokedAt: consent.revokedAt?.toISOString(),
+    anchors: serializeAnchorReferences(consent.anchors),
   };
 };
 
@@ -141,6 +144,8 @@ export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
     throw error;
   }
   await auditConsent(req as AuthenticatedRequest, 'CONSENT_REQUESTED', consent, doctor.id);
+  // Durable enqueue only (one local insert); the chain write happens in the anchor worker.
+  await enqueueConsentAnchor(consent, 'REQUESTED', document.documentHash ?? null);
   emitAppEvent('consent.requested', {
     ...eventBase({
       recipientUserId: patient._id.toString(),
@@ -230,7 +235,8 @@ const updateConsent = (
     await consent.save();
     await auditConsent(req as AuthenticatedRequest, action, consent, patient.id);
 
-    const document = await MedicalDocument.findById(consent.documentId).select('title');
+    const document = await MedicalDocument.findById(consent.documentId).select('title documentHash');
+    await enqueueConsentAnchor(consent, status, document?.documentHash ?? null);
     const documentTitle = document?.title ?? 'a document';
     emitAppEvent(CONSENT_EVENT_BY_STATUS[status], {
       ...eventBase({
