@@ -16,6 +16,7 @@ import {
   Pencil,
   Search,
   Share2,
+  ShieldAlert,
   ShieldCheck,
   Siren,
   TimerOff,
@@ -41,6 +42,7 @@ const actionLabels: Record<AuditAction, string> = {
   DOCUMENT_DELETED: 'Document deleted',
   DOCUMENT_UPDATED: 'Document updated',
   INTEGRITY_VERIFIED: 'Integrity check',
+  DOCUMENT_INTEGRITY_FAILED: 'Integrity FAILURE',
   CONSENT_REQUESTED: 'Consent requested',
   CONSENT_APPROVED: 'Consent approved',
   CONSENT_REJECTED: 'Consent rejected',
@@ -71,6 +73,7 @@ const actionStyles: Record<AuditAction, string> = {
   DOCUMENT_DELETED: 'bg-rose-400/15 text-rose-100',
   DOCUMENT_UPDATED: 'bg-sky-300/10 text-sky-100',
   INTEGRITY_VERIFIED: 'bg-emerald-300/10 text-emerald-100',
+  DOCUMENT_INTEGRITY_FAILED: 'bg-rose-500/20 text-rose-100',
   CONSENT_REQUESTED: 'bg-cyan-300/10 text-cyan-100',
   CONSENT_APPROVED: 'bg-emerald-300/10 text-emerald-100',
   CONSENT_REJECTED: 'bg-amber-300/10 text-amber-100',
@@ -101,6 +104,7 @@ const actionDescriptions: Record<AuditAction, string> = {
   DOCUMENT_DELETED: 'Document removed from the vault',
   DOCUMENT_UPDATED: 'Document metadata changed',
   INTEGRITY_VERIFIED: 'File hash compared against the blockchain record',
+  DOCUMENT_INTEGRITY_FAILED: 'Encrypted file failed authentication — tampering or disk corruption',
   CONSENT_REQUESTED: 'Doctor requested patient-approved document access',
   CONSENT_APPROVED: 'Patient approved document access',
   CONSENT_REJECTED: 'Patient rejected document access',
@@ -140,6 +144,7 @@ const actionIcons: Record<AuditAction, typeof Eye> = {
   DOCUMENT_DELETED: Trash2,
   DOCUMENT_UPDATED: Pencil,
   INTEGRITY_VERIFIED: ShieldCheck,
+  DOCUMENT_INTEGRITY_FAILED: ShieldAlert,
   CONSENT_REQUESTED: Share2,
   CONSENT_APPROVED: CheckCircle2,
   CONSENT_REJECTED: XCircle,
@@ -272,6 +277,12 @@ export default function AdminDashboard() {
                       {log.action === 'EMERGENCY_ACCESS_EXPIRED' && log.metadata?.expiresAt ? (
                         <p className="mt-2 text-xs leading-5 text-slate-300">
                           Expired {formatDateTime(log.metadata.expiresAt)}
+                        </p>
+                      ) : null}
+                      {log.action === 'DOCUMENT_INTEGRITY_FAILED' && log.metadata?.reason ? (
+                        <p className="mt-2 text-xs font-semibold leading-5 text-rose-200">
+                          Reason: {log.metadata.reason}
+                          {log.metadata.operation ? ` · during ${log.metadata.operation}` : ''}
                         </p>
                       ) : null}
                       {log.action === 'INTEGRITY_VERIFIED' && log.metadata?.integrityVerified ? (

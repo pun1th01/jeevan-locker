@@ -343,7 +343,7 @@ const streamDocumentFile = async (
     try {
       contentLength = (await verifyEncryptedFile(resolvedFilePath, document.encryption, document._id.toString())).plaintextSize;
     } catch (error) {
-      if (respondToVaultError(res, error)) {
+      if (await respondToVaultError(req, res, error, user, document, disposition === 'inline' ? 'view' : 'download')) {
         return;
       }
 
@@ -382,11 +382,38 @@ const streamDocumentFile = async (
 export const VAULT_INTEGRITY_FAILURE_MESSAGE = 'Document file failed integrity check';
 export const VAULT_KEY_UNAVAILABLE_MESSAGE = 'Document encryption key is unavailable';
 
-/** Maps a decryption failure to a response. Returns false for errors that are not vault errors. */
-const respondToVaultError = (res: Response, error: unknown): boolean => {
+type VaultOperation = 'view' | 'download' | 'integrity';
+
+/**
+ * Maps a decryption failure to a response AND writes the DOCUMENT_INTEGRITY_FAILED audit row. A file
+ * failing its own authentication is tampering or disk corruption — it must never be the one event that
+ * leaves no trace. Returns false for errors that are not vault errors (caller rethrows).
+ */
+const respondToVaultError = async (
+  req: Request,
+  res: Response,
+  error: unknown,
+  user: SafeUser,
+  document: IMedicalDocument,
+  operation: VaultOperation
+): Promise<boolean> => {
   if (!(error instanceof VaultFileError)) {
     return false;
   }
+
+  await createAuditLog({
+    userId: user.id,
+    action: 'DOCUMENT_INTEGRITY_FAILED',
+    targetDocument: document._id,
+    ipAddress: getRequestIpAddress(req),
+    metadata: {
+      reason: error.code,
+      operation,
+      documentId: document._id.toString(),
+      storedFileName: document.storedFileName,
+      keyId: document.encryption?.keyId ?? '',
+    },
+  });
 
   if (error.code === 'KEY_UNAVAILABLE') {
     res.status(503).json({ message: VAULT_KEY_UNAVAILABLE_MESSAGE });
@@ -591,7 +618,7 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
       currentHash = await hashDocumentPlaintext(document, resolvedFilePath);
     } catch (error) {
       // An encrypted file that fails authentication cannot yield a hash at all — that is itself the finding.
-      if (respondToVaultError(res, error)) {
+      if (await respondToVaultError(req, res, error, user, document, 'integrity')) {
         return;
       }
 
