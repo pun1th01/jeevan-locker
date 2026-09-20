@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 import type { SafeUser } from '../types/user.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
+import { emitAppEvent, eventBase } from '../events/appEvents';
 import {
   auditPatientLookup,
   findPatientByQuery,
@@ -141,6 +142,19 @@ export const requestLabLink: RequestHandler = asyncHandler(async (req, res) => {
   }
 
   await auditLink(req as AuthenticatedRequest, lab.id, 'LAB_LINK_REQUESTED', link);
+  emitAppEvent('lab.link.requested', {
+    ...eventBase({
+      recipientUserId: patientId.toString(),
+      actorUserId: lab.id,
+      actorName: lab.name,
+      documentId: null,
+      message: `${lab.name} requests permission to upload reports to your vault`,
+    }),
+    documentId: null,
+    labLinkId: link._id.toString(),
+    labName: lab.name,
+    ...(lab.organisation ? { organisation: lab.organisation } : {}),
+  });
   await populateLink(link);
   res.status(201).json({ message: 'Link request sent to patient', link: serializeLabLink(link) });
 });
@@ -212,6 +226,23 @@ const transitionLabLink = (
     await link.save();
 
     await auditLink(req as AuthenticatedRequest, patient.id, action, link);
+
+    // Only approval notifies the lab; rejection and revocation are audit-only in Phase 0.
+    if (nextStatus === 'ACTIVE') {
+      emitAppEvent('lab.link.approved', {
+        ...eventBase({
+          recipientUserId: link.labId.toString(),
+          actorUserId: patient.id,
+          actorName: patient.name,
+          documentId: null,
+          message: `${patient.name} authorised your lab to upload reports`,
+        }),
+        documentId: null,
+        labLinkId: link._id.toString(),
+        patientName: patient.name,
+      });
+    }
+
     await populateLink(link);
     res.json({ message: `Lab link ${successMessage.toLowerCase()}`, link: serializeLabLink(link) });
   });

@@ -6,6 +6,7 @@ import { User } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
+import { emitAppEvent, eventBase } from '../events/appEvents';
 
 interface PopulatedUser {
   _id: Types.ObjectId;
@@ -140,6 +141,19 @@ export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
     throw error;
   }
   await auditConsent(req as AuthenticatedRequest, 'CONSENT_REQUESTED', consent, doctor.id);
+  emitAppEvent('consent.requested', {
+    ...eventBase({
+      recipientUserId: patient._id.toString(),
+      actorUserId: doctor.id,
+      actorName: doctor.name,
+      documentId: document._id.toString(),
+      message: `${doctor.name} requested access to "${document.title}"`,
+    }),
+    documentId: document._id.toString(),
+    consentId: consent._id.toString(),
+    documentTitle: document.title,
+    purpose: consent.purpose,
+  });
   res.status(201).json({ message: 'Access request sent to patient', consent: serializeConsent(consent) });
 });
 
@@ -215,8 +229,36 @@ const updateConsent = (
     if (status === 'REVOKED') consent.revokedAt = new Date();
     await consent.save();
     await auditConsent(req as AuthenticatedRequest, action, consent, patient.id);
+
+    const document = await MedicalDocument.findById(consent.documentId).select('title');
+    const documentTitle = document?.title ?? 'a document';
+    emitAppEvent(CONSENT_EVENT_BY_STATUS[status], {
+      ...eventBase({
+        recipientUserId: consent.doctorId.toString(),
+        actorUserId: patient.id,
+        actorName: patient.name,
+        documentId: consent.documentId.toString(),
+        message: CONSENT_MESSAGE_BY_STATUS[status](patient.name, documentTitle),
+      }),
+      documentId: consent.documentId.toString(),
+      consentId: consent._id.toString(),
+      documentTitle,
+    });
+
     res.json({ message: `Consent ${status.toLowerCase()}`, consent: serializeConsent(consent) });
   });
+
+const CONSENT_EVENT_BY_STATUS = {
+  APPROVED: 'consent.approved',
+  REJECTED: 'consent.rejected',
+  REVOKED: 'consent.revoked',
+} as const;
+
+const CONSENT_MESSAGE_BY_STATUS: Record<'APPROVED' | 'REJECTED' | 'REVOKED', (patientName: string, title: string) => string> = {
+  APPROVED: (patientName, title) => `${patientName} approved your access to "${title}"`,
+  REJECTED: (patientName, title) => `${patientName} declined your access request for "${title}"`,
+  REVOKED: (patientName, title) => `${patientName} revoked your access to "${title}"`,
+};
 
 export const approveConsent = updateConsent('APPROVED', 'PENDING', 'CONSENT_APPROVED');
 export const rejectConsent = updateConsent('REJECTED', 'PENDING', 'CONSENT_REJECTED');

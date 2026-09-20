@@ -23,6 +23,7 @@ import { UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 import { calculateFileSha256, SHA_256 } from '../utils/documentHash.util';
 import { getRegisteredDocumentHash } from '../services/documentRegistry.service';
 import { DocumentIngestError, discardUploadedFile, ingestUploadedDocument } from '../services/documentIngest.service';
+import { emitAppEvent, eventBase } from '../events/appEvents';
 
 /** Projection for every populated user reference in document responses. Must cover everything SafeUser needs. */
 export const USER_REFERENCE_FIELDS = 'name email role verified organisation createdAt';
@@ -611,6 +612,19 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
       action: 'DOCUMENT_SHARE',
       targetDocument: document._id,
       ipAddress: getRequestIpAddress(req),
+    });
+
+    // Inside the !alreadyShared branch on purpose: re-sharing with the same doctor is not a notification.
+    emitAppEvent('document.shared', {
+      ...eventBase({
+        recipientUserId: doctor._id.toString(),
+        actorUserId: user.id,
+        actorName: user.name,
+        documentId: document._id.toString(),
+        message: `${user.name} shared "${document.title}" with you`,
+      }),
+      documentId: document._id.toString(),
+      documentTitle: document.title,
     });
   }
 

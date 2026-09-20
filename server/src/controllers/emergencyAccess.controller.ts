@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { findApprovedConsent } from '../utils/consent.util';
+import { emitAppEvent, eventBase } from '../events/appEvents';
 import {
   EMERGENCY_ACCESS_DURATION_MS,
   EMERGENCY_ACCESS_DURATION_MINUTES,
@@ -130,6 +131,22 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
       reason,
       expiresAt: expiresAt.toISOString(),
     },
+  });
+
+  // Only a NEW grant notifies; the "already active" path above returns without emitting.
+  emitAppEvent('emergency.granted', {
+    ...eventBase({
+      recipientUserId: patient._id.toString(),
+      actorUserId: doctor.id,
+      actorName: doctor.name,
+      documentId: document._id.toString(),
+      message: `${doctor.name} used emergency access on "${document.title}"`,
+    }),
+    documentId: document._id.toString(),
+    emergencyAccessId: emergencyAccess._id.toString(),
+    documentTitle: document.title,
+    reason,
+    expiresAt: expiresAt.toISOString(),
   });
 
   res.status(201).json({

@@ -1,10 +1,12 @@
 import { app } from './app';
 import { connectDB } from './config/db';
 import { env } from './config/env';
+import { registerAppEventListeners } from './events/registerListeners';
 import { seedDemoUsers } from './utils/seedDemoUsers';
 
 const startServer = async () => {
   await connectDB();
+  registerAppEventListeners();
   
   if (env.nodeEnv === 'development') {
     await seedDemoUsers();

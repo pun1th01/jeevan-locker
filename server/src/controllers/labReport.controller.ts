@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
 import { parseTestValues } from '../utils/testValues.util';
+import { emitAppEvent, eventBase } from '../events/appEvents';
 import { findActiveLabLink } from './labLink.controller';
 import { populateDocumentUsers, serializeMedicalDocument } from './document.controller';
 
@@ -151,6 +152,23 @@ export const uploadLabReport: RequestHandler = asyncHandler(async (req, res) => 
       testValueCount: String(testValues.values.length),
       criticalCount: String(testValues.values.filter((value) => value.flag === 'critical').length),
     },
+  });
+
+  const criticalCount = testValues.values.filter((value) => value.flag === 'critical').length;
+  emitAppEvent('lab.report.uploaded', {
+    ...eventBase({
+      recipientUserId: patient._id.toString(),
+      actorUserId: lab.id,
+      actorName: lab.name,
+      documentId: document._id.toString(),
+      message:
+        `${lab.name} added a verified report "${title}" to your vault` +
+        (criticalCount > 0 ? ` (${criticalCount} critical value${criticalCount === 1 ? '' : 's'})` : ''),
+    }),
+    documentId: document._id.toString(),
+    documentTitle: title,
+    labName: lab.name,
+    criticalCount,
   });
 
   const populatedDocument = await populateDocumentUsers(document);
