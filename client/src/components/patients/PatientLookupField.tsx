@@ -13,14 +13,23 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 
-interface PatientLookupFieldProps {
+interface DoctorPatientLookupFieldProps {
   /** Which `access` statuses the enclosing modal lets the doctor pick. Everything else renders disabled with its badge. */
   selectableStatuses: readonly PatientDocumentAccess[];
   /** Accent for the selected row / focus ring; matches the enclosing modal. */
   accent: 'cyan' | 'rose';
   disabled?: boolean;
   onSelectionChange: (selection: PatientDocumentSelection | null) => void;
+  mode?: 'doctor';
 }
+
+interface LabLinkPatientLookupFieldProps {
+  mode: 'lab-link';
+  disabled?: boolean;
+  onLinkRequest: (query: string) => Promise<void>;
+}
+
+type PatientLookupFieldProps = DoctorPatientLookupFieldProps | LabLinkPatientLookupFieldProps;
 
 const accessBadgeLabels: Record<Exclude<PatientDocumentAccess, 'none'>, string> = {
   shared: 'Already shared',
@@ -37,6 +46,10 @@ const accentClasses = {
   rose: {
     focus: 'focus:border-rose-300 focus:ring-rose-300/20',
     selected: 'border-rose-300/40 bg-rose-300/[0.06]',
+  },
+  emerald: {
+    focus: 'focus:border-emerald-300 focus:ring-emerald-300/20',
+    selected: 'border-emerald-300/40 bg-emerald-300/[0.06]',
   },
 } as const;
 
@@ -75,12 +88,10 @@ const getBadges = (document: PatientLookupDocument): Badge[] => {
   return badges;
 };
 
-export default function PatientLookupField({
-  selectableStatuses,
-  accent,
-  disabled = false,
-  onSelectionChange,
-}: PatientLookupFieldProps) {
+export default function PatientLookupField(props: PatientLookupFieldProps) {
+  const { disabled = false } = props;
+  const doctorProps: DoctorPatientLookupFieldProps | null = props.mode === 'lab-link' ? null : props;
+  const accent = doctorProps?.accent ?? 'emerald';
   const inputId = useId();
   const [query, setQuery] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
@@ -89,12 +100,12 @@ export default function PatientLookupField({
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
   const selectDocument = (document: PatientLookupDocument | null) => {
-    if (!result) {
+    if (!result || !doctorProps) {
       return;
     }
 
     setSelectedDocumentId(document?.id ?? null);
-    onSelectionChange(document ? { patient: result.patient, document } : null);
+    doctorProps.onSelectionChange(document ? { patient: result.patient, document } : null);
   };
 
   const runLookup = async () => {
@@ -109,9 +120,15 @@ export default function PatientLookupField({
     setLookupError(null);
     setResult(null);
     setSelectedDocumentId(null);
-    onSelectionChange(null);
 
     try {
+      if (!doctorProps) {
+        await props.onLinkRequest(trimmedQuery);
+        setQuery('');
+        return;
+      }
+
+      doctorProps.onSelectionChange(null);
       setResult(await patientService.lookup(trimmedQuery));
     } catch (error) {
       setLookupError(getApiErrorMessage(error));
@@ -152,10 +169,12 @@ export default function PatientLookupField({
           </div>
           <Button type="button" variant="secondary" onClick={() => void runLookup()} disabled={disabled || isLookingUp}>
             {isLookingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            Look up
+            {doctorProps ? 'Look up' : 'Request link'}
           </Button>
         </div>
-        <p className="text-xs text-slate-500">Exact match only. Every lookup is recorded in the audit trail.</p>
+        <p className="text-xs text-slate-500">
+          Exact match only. Every {doctorProps ? 'lookup' : 'link request'} is recorded in the audit trail.
+        </p>
       </div>
 
       {lookupError ? (
@@ -165,7 +184,7 @@ export default function PatientLookupField({
         </div>
       ) : null}
 
-      {result ? (
+      {doctorProps && result ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-sm text-white">
             <UserRound className="h-4 w-4 text-slate-400" />
@@ -186,7 +205,7 @@ export default function PatientLookupField({
               aria-label={`Documents for ${result.patient.name}`}
             >
               {result.documents.map((document) => {
-                const selectable = selectableStatuses.includes(document.access) && !disabled;
+                const selectable = doctorProps.selectableStatuses.includes(document.access) && !disabled;
                 const selected = selectedDocumentId === document.id;
 
                 return (
