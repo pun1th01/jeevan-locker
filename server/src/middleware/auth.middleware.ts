@@ -72,3 +72,28 @@ export const requireRole = (...roles: UserRole[]): RequestHandler => {
     next();
   };
 };
+
+export const UNVERIFIED_DOCTOR_MESSAGE = 'Your doctor account is awaiting admin verification';
+
+/**
+ * Blocks doctor-initiated access paths (patient lookup, consent request, break-glass) until an admin has
+ * verified the account. Mount it AFTER requireRole('doctor'); non-doctor roles pass through untouched so a
+ * doctor-only rule can never block a lab or patient by accident. Because verifyToken reloads the user from
+ * the database on every request, verification takes effect immediately without a new login.
+ * Unverified doctors keep read access to documents already shared with them — that is decided elsewhere.
+ */
+export const requireVerifiedDoctor: RequestHandler = (req, res, next) => {
+  const authRequest = req as AuthenticatedRequest;
+
+  if (!authRequest.user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  if (authRequest.user.role === 'doctor' && !authRequest.user.verified) {
+    res.status(403).json({ message: UNVERIFIED_DOCTOR_MESSAGE });
+    return;
+  }
+
+  next();
+};

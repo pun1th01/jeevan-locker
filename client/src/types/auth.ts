@@ -8,6 +8,8 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  /** Admin-verified. Unverified doctors cannot look up patients, request consent, or break-glass. */
+  verified: boolean;
   createdAt: string;
 }
 

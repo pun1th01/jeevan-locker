@@ -8,13 +8,13 @@ import {
   requestConsent,
   revokeConsent,
 } from '../controllers/consent.controller';
-import { requireRole, verifyToken } from '../middleware/auth.middleware';
+import { requireRole, requireVerifiedDoctor, verifyToken } from '../middleware/auth.middleware';
 
 const router = Router();
 
 router.use(verifyToken);
-// TODO(Task 2, item 7 — doctor verification gate): add `requireVerifiedDoctor` after requireRole('doctor') on /request.
-router.post('/request', requireRole('doctor'), requestConsent);
+// Only /request is gated on verification; /my stays open so an unverified doctor can still see their history.
+router.post('/request', requireRole('doctor'), requireVerifiedDoctor, requestConsent);
 router.get('/my', requireRole('doctor'), getMyConsents);
 router.get('/pending', requireRole('patient'), getPendingConsents);
 router.get('/received', requireRole('patient'), getReceivedConsents);

@@ -9,6 +9,7 @@ import documentRoutes from './routes/document.routes';
 import emergencyAccessRoutes from './routes/emergencyAccess.routes';
 import consentRoutes from './routes/consent.routes';
 import patientsRoutes from './routes/patients.routes';
+import adminRoutes from './routes/admin.routes';
 
 export const app = express();
 
@@ -34,6 +35,7 @@ app.use('/api/emergency-access', emergencyAccessRoutes);
 app.use('/api/consents', consentRoutes);
 app.use('/api/patients', patientsRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

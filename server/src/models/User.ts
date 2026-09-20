@@ -8,6 +8,7 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: UserRole;
+  verified: boolean;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -42,6 +43,12 @@ const userSchema = new Schema<IUser, UserModel>(
       type: String,
       enum: USER_ROLES,
       default: 'patient',
+    },
+    // Meaningful for doctors (set by an admin via PATCH /api/admin/users/:id/verify) and labs (always true,
+    // they are admin-provisioned). Patients and admins carry the default and nothing reads it.
+    verified: {
+      type: Boolean,
+      default: false,
     },
   },
   {

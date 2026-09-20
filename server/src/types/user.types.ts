@@ -15,5 +15,7 @@ export interface SafeUser {
   name: string;
   email: string;
   role: UserRole;
+  /** Admin-verified. Gates doctor-initiated access (lookup, consent, break-glass). Always true for provisioned accounts. */
+  verified: boolean;
   createdAt: string;
 }

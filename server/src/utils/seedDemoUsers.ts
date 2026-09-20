@@ -15,6 +15,8 @@ interface DemoAccount {
   email: string;
   password: string;
   role: UserRole;
+  /** Demo doctors are pre-verified so the demo flow never hits the verification gate. */
+  verified?: boolean;
 }
 
 interface DemoDocumentSeed {
@@ -54,12 +56,14 @@ const demoAccounts: DemoAccount[] = [
     email: 'doctor@jeevanlocker.dev',
     password: 'Doctor123!',
     role: 'doctor',
+    verified: true,
   },
   {
     name: 'Dr. Rahul Menon',
     email: 'doctor2@jeevanlocker.dev',
     password: 'Doctor123!',
     role: 'doctor',
+    verified: true,
   },
   {
     name: 'Aarav Sharma',
@@ -658,12 +662,15 @@ const createAssetBuffer = (document: DemoDocumentSeed) => {
 const ensureDemoAccount = async (account: DemoAccount): Promise<IUser> => {
   const existingUser = await User.findOne({ email: account.email }).select('+password');
 
+  const verified = account.verified ?? false;
+
   if (!existingUser) {
     return User.create({
       name: account.name,
       email: account.email,
       password: account.password,
       role: account.role,
+      verified,
     });
   }
 
@@ -676,6 +683,11 @@ const ensureDemoAccount = async (account: DemoAccount): Promise<IUser> => {
 
   if (existingUser.role !== account.role) {
     existingUser.role = account.role;
+    changed = true;
+  }
+
+  if (existingUser.verified !== verified) {
+    existingUser.verified = verified;
     changed = true;
   }
 

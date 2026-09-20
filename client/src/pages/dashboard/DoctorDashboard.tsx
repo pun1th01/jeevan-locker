@@ -1,5 +1,6 @@
-import { Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
+import { BadgeAlert, Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuthStore } from '../../store/useAuthStore';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
@@ -15,6 +16,8 @@ import type { EmergencyAccess, GrantEmergencyAccessInput } from '../../types/eme
 import type { ConsentGrant, RequestConsentInput } from '../../types/consent';
 
 export default function DoctorDashboard() {
+  // Mirrors the server gate: unverified doctors get 403 on lookup, consent request, and break-glass.
+  const isVerified = useAuthStore((state) => state.user?.verified ?? false);
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<MedicalDocument | null>(null);
   const [previewDocument, setPreviewDocument] = useState<MedicalDocument | null>(null);
@@ -175,7 +178,17 @@ export default function DoctorDashboard() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" size="sm" onClick={() => { setConsentError(null); setIsConsentDialogOpen(true); }}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!isVerified}
+              title={isVerified ? undefined : 'Available after admin verification'}
+              onClick={() => {
+                setConsentError(null);
+                setIsConsentDialogOpen(true);
+              }}
+            >
               <ClipboardCheck className="h-4 w-4" />
               Request Access
             </Button>
@@ -183,6 +196,8 @@ export default function DoctorDashboard() {
               type="button"
               variant="destructive"
               size="sm"
+              disabled={!isVerified}
+              title={isVerified ? undefined : 'Available after admin verification'}
               onClick={() => {
                 setEmergencyError(null);
                 setIsEmergencyDialogOpen(true);
@@ -193,6 +208,19 @@ export default function DoctorDashboard() {
             </Button>
           </div>
         </div>
+
+        {!isVerified ? (
+          <div className="mt-5 flex items-start gap-2 rounded-md border border-amber-300/25 bg-amber-300/10 px-3 py-3 text-sm text-amber-100">
+            <BadgeAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">Account awaiting verification</p>
+              <p className="mt-1 leading-6 text-amber-100/85">
+                An administrator has to verify your doctor account before you can look up patients, request access, or use
+                Emergency Access. Records patients have already shared with you remain available below.
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         {pageError ? (
           <div className="mt-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">

@@ -11,6 +11,7 @@ interface PopulatedUserReference {
   name: string;
   email: string;
   role: UserRole;
+  verified: boolean;
   createdAt: Date;
 }
 
@@ -67,6 +68,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
       name: user.name,
       email: user.email,
       role: user.role,
+      verified: Boolean(user.verified),
       createdAt: user.createdAt.toISOString(),
     };
   }
@@ -76,6 +78,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
     name: 'Unknown user',
     email: '',
     role: 'patient',
+    verified: false,
     createdAt: '',
   };
 };
@@ -125,7 +128,7 @@ export const getAuditSummary: RequestHandler = asyncHandler(async (_req, res) =>
     AccessLog.find()
       .sort({ timestamp: -1 })
       .limit(50)
-      .populate('userId', 'name email role createdAt')
+      .populate('userId', 'name email role verified createdAt')
       .populate('targetDocument', 'title originalFileName createdAt'),
   ]);
 

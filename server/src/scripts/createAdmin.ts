@@ -77,6 +77,7 @@ const createAdmin = async () => {
     email: validation.data.email,
     password: validation.data.password,
     role: 'admin',
+    verified: true,
   });
 
   await createAuditLog({

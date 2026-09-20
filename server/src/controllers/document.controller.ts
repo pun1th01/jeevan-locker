@@ -28,6 +28,7 @@ interface PopulatedUserReference {
   name: string;
   email: string;
   role: UserRole;
+  verified: boolean;
   createdAt: Date;
 }
 
@@ -68,6 +69,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
       name: user.name,
       email: user.email,
       role: user.role,
+      verified: Boolean(user.verified),
       createdAt: user.createdAt.toISOString(),
     };
   }
@@ -77,6 +79,7 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
     name: 'Unknown user',
     email: '',
     role: 'patient',
+    verified: false,
     createdAt: '',
   };
 };
@@ -102,8 +105,8 @@ const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentRe
 
 const populateDocumentUsers = async (document: IMedicalDocument): Promise<IMedicalDocument> => {
   await document.populate([
-    { path: 'uploadedBy', select: 'name email role createdAt' },
-    { path: 'sharedWithDoctors', select: 'name email role createdAt' },
+    { path: 'uploadedBy', select: 'name email role verified createdAt' },
+    { path: 'sharedWithDoctors', select: 'name email role verified createdAt' },
   ]);
 
   return document;
@@ -398,8 +401,8 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
 
   const documents = await MedicalDocument.find(query)
     .sort({ createdAt: -1 })
-    .populate('uploadedBy', 'name email role createdAt')
-    .populate('sharedWithDoctors', 'name email role createdAt');
+    .populate('uploadedBy', 'name email role verified createdAt')
+    .populate('sharedWithDoctors', 'name email role verified createdAt');
 
   res.json({ documents: documents.map(serializeMedicalDocument) });
 });
