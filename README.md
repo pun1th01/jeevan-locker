@@ -158,6 +158,8 @@ The frontend will start at `http://localhost:5173`.
 
 ## 🔌 API Overview
 
+> Full, exact contracts for the Phase 0 additions live in [`docs/API_LAB.md`](docs/API_LAB.md) (lab accounts, patient links, verified report upload) and [`docs/API_ADMIN.md`](docs/API_ADMIN.md) (lab provisioning, doctor verification). The list below is the original MVP summary and is out of date.
+
 * **Auth:** `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
 * **Documents:** `GET /api/documents`, `POST /api/documents/upload`
 * **Sharing:** `POST /api/documents/:id/share`, `DELETE /api/documents/:id/share/:doctorId`
