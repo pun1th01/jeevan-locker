@@ -1,4 +1,4 @@
-import { Loader2, LockKeyhole, Mail, Shield, Stethoscope, UserPlus, UserRound } from 'lucide-react';
+import { Loader2, LockKeyhole, Mail, Stethoscope, UserPlus, UserRound } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
@@ -6,16 +6,15 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { cn } from '../../lib/utils';
 import { useAuthStore } from '../../store/useAuthStore';
-import type { RegisterPayload, UserRole } from '../../types/auth';
+import type { RegisterPayload, RegistrableRole } from '../../types/auth';
 
 const roleOptions: Array<{
-  value: UserRole;
+  value: RegistrableRole;
   label: string;
   Icon: typeof UserRound;
 }> = [
   { value: 'patient', label: 'Patient', Icon: UserRound },
   { value: 'doctor', label: 'Doctor', Icon: Stethoscope },
-  { value: 'admin', label: 'Admin', Icon: Shield },
 ];
 
 type RegisterFormErrors = Partial<Record<keyof RegisterPayload, string>>;
@@ -135,7 +134,7 @@ export default function RegisterPage() {
 
           <div className="space-y-2">
             <Label>Workspace role</Label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {roleOptions.map(({ value, label, Icon }) => {
                 const selected = form.role === value;
 
@@ -184,7 +183,7 @@ export default function RegisterPage() {
         <h2 className="mt-4 max-w-xl text-4xl font-bold leading-tight text-white">
           A dedicated workspace for patients, clinicians, and platform administrators.
         </h2>
-        <div className="mt-8 grid max-w-lg grid-cols-3 gap-3">
+        <div className="mt-8 grid max-w-lg grid-cols-2 gap-3">
           {roleOptions.map(({ value, label, Icon }) => (
             <div key={value} className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
               <Icon className="h-5 w-5 text-emerald-300" />

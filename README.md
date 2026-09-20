@@ -102,6 +102,23 @@ For immediate testing, development-only seeded accounts are initialized on start
 
 *(Note: These accounts only seed when `NODE_ENV=development`)*
 
+### Creating an admin
+
+Admins **cannot self-register** — `POST /api/auth/register` only accepts `patient` or `doctor`, and this stays CLI-only permanently. Provision one with:
+
+```bash
+cd server
+npm run create:admin -- --name "Ops Admin" --email ops@example.com --password 'Str0ngPass!'
+```
+
+The script connects **directly to `MONGO_URI`** and prints which database it reached. It deliberately bypasses the in-memory MongoDB that `npm run dev` spins up in development, because anything written there vanishes when that process exits. So:
+
+* You need a real `mongod` reachable at `MONGO_URI` (e.g. `mongodb://127.0.0.1:27017/jeevan-locker`). With no server there the script exits 1 with `ECONNREFUSED`.
+* The API must also be pointed at that same real database (not the in-memory fallback) for the new admin to be able to log in. In development the in-memory swap triggers whenever `MONGO_URI` contains `127.0.0.1` — see `server/src/config/db.ts`.
+* For the demo flow you don't need this at all: `admin@jeevanlocker.dev` is seeded automatically.
+
+Every run writes an `ADMIN_CREATED` audit row (IP recorded as `cli`) that shows up in the admin dashboard.
+
 ---
 
 ## 🚀 Setup Instructions

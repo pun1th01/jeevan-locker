@@ -1,4 +1,4 @@
-import { USER_ROLES, type UserRole } from '../types/user.types';
+import { REGISTRABLE_ROLES, USER_ROLES, type RegistrableRole, type UserRole } from '../types/user.types';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -11,7 +11,7 @@ interface RegisterInput {
   name: string;
   email: string;
   password: string;
-  role: UserRole;
+  role: RegistrableRole;
 }
 
 interface LoginInput {
@@ -21,6 +21,10 @@ interface LoginInput {
 
 export const isUserRole = (value: unknown): value is UserRole =>
   typeof value === 'string' && USER_ROLES.includes(value as UserRole);
+
+/** True only for roles a user may self-select at registration; admin is never registrable. */
+export const isRegistrableRole = (value: unknown): value is RegistrableRole =>
+  typeof value === 'string' && REGISTRABLE_ROLES.includes(value as RegistrableRole);
 
 export const validateRegisterInput = (body: Record<string, unknown>): ValidationResult<RegisterInput> => {
   const errors: Record<string, string> = {};
@@ -41,11 +45,11 @@ export const validateRegisterInput = (body: Record<string, unknown>): Validation
     errors.password = 'Password must be at least 8 characters';
   }
 
-  if (!isUserRole(requestedRole)) {
-    errors.role = 'Role must be patient, doctor, or admin';
+  if (!isRegistrableRole(requestedRole)) {
+    errors.role = 'Role must be patient or doctor';
   }
 
-  if (Object.keys(errors).length > 0 || !isUserRole(requestedRole)) {
+  if (Object.keys(errors).length > 0 || !isRegistrableRole(requestedRole)) {
     return { errors };
   }
 

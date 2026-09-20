@@ -1,5 +1,8 @@
 export type UserRole = 'patient' | 'doctor' | 'admin';
 
+/** Roles a user can pick on the register page. Admins are provisioned server-side only. */
+export type RegistrableRole = Exclude<UserRole, 'admin'>;
+
 export interface User {
   id: string;
   name: string;
@@ -20,5 +23,5 @@ export interface LoginCredentials {
 
 export interface RegisterPayload extends LoginCredentials {
   name: string;
-  role: UserRole;
+  role: RegistrableRole;
 }
