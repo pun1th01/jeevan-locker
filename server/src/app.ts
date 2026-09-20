@@ -12,6 +12,9 @@ import patientsRoutes from './routes/patients.routes';
 
 export const app = express();
 
+// Must be set before any middleware reads req.ip (audit logging, rate limiting). See env.ts for the rules.
+app.set('trust proxy', env.trustProxy);
+
 app.use(helmet());
 app.use(
   cors({

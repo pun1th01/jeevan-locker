@@ -6,8 +6,6 @@ export interface MedicalDocument {
   id: string;
   title: string;
   originalFileName: string;
-  storedFileName: string;
-  filePath: string;
   mimeType: MedicalDocumentMimeType;
   uploadedBy: User;
   sharedWithDoctors: User[];

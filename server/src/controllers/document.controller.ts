@@ -20,6 +20,7 @@ import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/eme
 import { findApprovedConsent } from '../utils/consent.util';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 import { calculateFileSha256, SHA_256 } from '../utils/documentHash.util';
+import { detectDocumentMimeType } from '../utils/fileSignature.util';
 import { getRegisteredDocumentHash, registerDocumentHash } from '../services/documentRegistry.service';
 
 interface PopulatedUserReference {
@@ -35,12 +36,11 @@ type DocumentWithUsers = Omit<IMedicalDocument, 'uploadedBy' | 'sharedWithDoctor
   sharedWithDoctors: Array<Types.ObjectId | PopulatedUserReference>;
 };
 
+/** Wire shape for a document. Storage details (storedFileName, filePath) are server-internal and never serialized. */
 interface MedicalDocumentResponse {
   id: string;
   title: string;
   originalFileName: string;
-  storedFileName: string;
-  filePath: string;
   mimeType: MedicalDocumentMimeType;
   uploadedBy: SafeUser;
   sharedWithDoctors: SafeUser[];
@@ -88,8 +88,6 @@ const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentRe
     id: document._id.toString(),
     title: document.title,
     originalFileName: document.originalFileName,
-    storedFileName: document.storedFileName,
-    filePath: document.filePath,
     mimeType: document.mimeType,
     uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
     sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference),
@@ -309,6 +307,15 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
   if (!title) {
     await removeUploadedFile(file.path);
     res.status(400).json({ message: 'Document title is required' });
+    return;
+  }
+
+  // Multer's fileFilter only sees the client-declared MIME type; the bytes on disk are the truth.
+  const detectedMimeType = await detectDocumentMimeType(file.path);
+
+  if (detectedMimeType !== file.mimetype) {
+    await removeUploadedFile(file.path);
+    res.status(400).json({ message: 'File content does not match its declared type' });
     return;
   }
 

@@ -13,19 +13,12 @@ interface CreateAuditLogInput {
 const toObjectId = (value: string | Types.ObjectId): Types.ObjectId =>
   value instanceof Types.ObjectId ? value : new Types.ObjectId(value);
 
-export const getRequestIpAddress = (req: Request): string => {
-  const forwardedFor = req.headers['x-forwarded-for'];
-
-  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-    return forwardedFor.split(',')[0].trim();
-  }
-
-  if (Array.isArray(forwardedFor) && forwardedFor[0]) {
-    return forwardedFor[0];
-  }
-
-  return req.ip ?? req.socket.remoteAddress ?? 'unknown';
-};
+/**
+ * Client IP for audit rows. `req.ip` already honours X-Forwarded-For exactly as far as `trust proxy`
+ * allows (see env.ts), so the header is never read here directly — reading it would let any client
+ * write an arbitrary address into the audit log.
+ */
+export const getRequestIpAddress = (req: Request): string => req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
 export const createAuditLog = async ({
   userId,
