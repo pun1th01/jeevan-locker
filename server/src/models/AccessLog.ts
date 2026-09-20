@@ -1,17 +1,38 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export const AUDIT_ACTIONS = [
+  // Authentication
   'USER_LOGIN',
+  // Documents
   'DOCUMENT_UPLOAD',
   'DOCUMENT_ACCESS',
   'DOCUMENT_PREVIEW',
   'DOCUMENT_DOWNLOAD',
   'DOCUMENT_SHARE',
+  'DOCUMENT_UNSHARED',
+  'DOCUMENT_DELETED',
+  'DOCUMENT_UPDATED',
+  'INTEGRITY_VERIFIED',
+  // Consent workflow
   'CONSENT_REQUESTED',
   'CONSENT_APPROVED',
   'CONSENT_REJECTED',
   'CONSENT_REVOKED',
+  // Break-glass emergency access
   'EMERGENCY_ACCESS_GRANTED',
+  'EMERGENCY_ACCESS_REVOKED',
+  'EMERGENCY_ACCESS_EXPIRED',
+  // Doctor / lab workflows
+  'PATIENT_LOOKUP',
+  'LAB_LINK_REQUESTED',
+  'LAB_LINKED',
+  'LAB_LINK_REJECTED',
+  'LAB_UNLINKED',
+  'LAB_REPORT_UPLOADED',
+  // Platform / admin
+  'NOTIFICATION_SENT',
+  'ADMIN_CREATED',
+  'DOCTOR_VERIFIED',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

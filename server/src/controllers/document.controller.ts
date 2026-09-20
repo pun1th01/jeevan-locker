@@ -483,7 +483,7 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
     const verified = currentHash.toLowerCase() === blockchainRecord.hash.toLowerCase();
     await createAuditLog({
       userId: user.id,
-      action: 'DOCUMENT_ACCESS',
+      action: 'INTEGRITY_VERIFIED',
       targetDocument: document._id,
       ipAddress: getRequestIpAddress(req),
       metadata: { integrityVerified: String(verified) },

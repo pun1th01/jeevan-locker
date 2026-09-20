@@ -1,4 +1,29 @@
-import { Activity, CheckCircle2, Database, Download, Eye, FileSearch, FileUp, Loader2, LogIn, Share2, Siren, UsersRound, XCircle } from 'lucide-react';
+import {
+  Activity,
+  BadgeCheck,
+  Bell,
+  CheckCircle2,
+  Database,
+  Download,
+  Eye,
+  FileSearch,
+  FileUp,
+  FlaskConical,
+  Link2,
+  Link2Off,
+  Loader2,
+  LogIn,
+  Pencil,
+  Search,
+  Share2,
+  ShieldCheck,
+  Siren,
+  TimerOff,
+  Trash2,
+  UserPlus,
+  UsersRound,
+  XCircle,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import { getApiErrorMessage } from '../../lib/api';
@@ -12,11 +37,26 @@ const actionLabels: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'Document preview',
   DOCUMENT_DOWNLOAD: 'Document download',
   DOCUMENT_SHARE: 'Document sharing',
+  DOCUMENT_UNSHARED: 'Document unshared',
+  DOCUMENT_DELETED: 'Document deleted',
+  DOCUMENT_UPDATED: 'Document updated',
+  INTEGRITY_VERIFIED: 'Integrity check',
   CONSENT_REQUESTED: 'Consent requested',
   CONSENT_APPROVED: 'Consent approved',
   CONSENT_REJECTED: 'Consent rejected',
   CONSENT_REVOKED: 'Consent revoked',
   EMERGENCY_ACCESS_GRANTED: 'Emergency access granted',
+  EMERGENCY_ACCESS_REVOKED: 'Emergency access revoked',
+  EMERGENCY_ACCESS_EXPIRED: 'Emergency access expired',
+  PATIENT_LOOKUP: 'Patient lookup',
+  LAB_LINK_REQUESTED: 'Lab link requested',
+  LAB_LINKED: 'Lab linked',
+  LAB_LINK_REJECTED: 'Lab link rejected',
+  LAB_UNLINKED: 'Lab unlinked',
+  LAB_REPORT_UPLOADED: 'Lab report uploaded',
+  NOTIFICATION_SENT: 'Notification sent',
+  ADMIN_CREATED: 'Admin created',
+  DOCTOR_VERIFIED: 'Doctor verified',
 };
 
 const actionStyles: Record<AuditAction, string> = {
@@ -26,11 +66,26 @@ const actionStyles: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'bg-sky-300/10 text-sky-100',
   DOCUMENT_DOWNLOAD: 'bg-rose-300/10 text-rose-100',
   DOCUMENT_SHARE: 'bg-violet-300/10 text-violet-100',
+  DOCUMENT_UNSHARED: 'bg-violet-300/10 text-violet-100',
+  DOCUMENT_DELETED: 'bg-rose-400/15 text-rose-100',
+  DOCUMENT_UPDATED: 'bg-sky-300/10 text-sky-100',
+  INTEGRITY_VERIFIED: 'bg-emerald-300/10 text-emerald-100',
   CONSENT_REQUESTED: 'bg-cyan-300/10 text-cyan-100',
   CONSENT_APPROVED: 'bg-emerald-300/10 text-emerald-100',
   CONSENT_REJECTED: 'bg-amber-300/10 text-amber-100',
   CONSENT_REVOKED: 'bg-rose-300/10 text-rose-100',
   EMERGENCY_ACCESS_GRANTED: 'bg-rose-400/15 text-rose-100',
+  EMERGENCY_ACCESS_REVOKED: 'bg-rose-300/10 text-rose-100',
+  EMERGENCY_ACCESS_EXPIRED: 'bg-slate-300/10 text-slate-200',
+  PATIENT_LOOKUP: 'bg-amber-300/10 text-amber-100',
+  LAB_LINK_REQUESTED: 'bg-cyan-300/10 text-cyan-100',
+  LAB_LINKED: 'bg-emerald-300/10 text-emerald-100',
+  LAB_LINK_REJECTED: 'bg-amber-300/10 text-amber-100',
+  LAB_UNLINKED: 'bg-rose-300/10 text-rose-100',
+  LAB_REPORT_UPLOADED: 'bg-emerald-300/10 text-emerald-100',
+  NOTIFICATION_SENT: 'bg-slate-300/10 text-slate-200',
+  ADMIN_CREATED: 'bg-violet-300/10 text-violet-100',
+  DOCTOR_VERIFIED: 'bg-emerald-300/10 text-emerald-100',
 };
 
 const actionDescriptions: Record<AuditAction, string> = {
@@ -40,11 +95,26 @@ const actionDescriptions: Record<AuditAction, string> = {
   DOCUMENT_PREVIEW: 'Secure in-app document preview opened',
   DOCUMENT_DOWNLOAD: 'Authorized document download started',
   DOCUMENT_SHARE: 'Patient granted doctor access',
+  DOCUMENT_UNSHARED: 'Patient removed doctor access',
+  DOCUMENT_DELETED: 'Document removed from the vault',
+  DOCUMENT_UPDATED: 'Document metadata changed',
+  INTEGRITY_VERIFIED: 'File hash compared against the blockchain record',
   CONSENT_REQUESTED: 'Doctor requested patient-approved document access',
   CONSENT_APPROVED: 'Patient approved document access',
   CONSENT_REJECTED: 'Patient rejected document access',
   CONSENT_REVOKED: 'Patient revoked document access',
   EMERGENCY_ACCESS_GRANTED: 'Doctor received time-limited Break-Glass access',
+  EMERGENCY_ACCESS_REVOKED: 'Break-Glass access was revoked before expiry',
+  EMERGENCY_ACCESS_EXPIRED: 'Break-Glass access window lapsed',
+  PATIENT_LOOKUP: 'Doctor or lab looked up a patient by email or ID',
+  LAB_LINK_REQUESTED: 'Lab asked a patient for upload authorisation',
+  LAB_LINKED: 'Patient authorised a lab to upload reports',
+  LAB_LINK_REJECTED: 'Patient declined a lab link request',
+  LAB_UNLINKED: 'Patient revoked a lab authorisation',
+  LAB_REPORT_UPLOADED: 'Lab uploaded a verified report to a patient vault',
+  NOTIFICATION_SENT: 'In-app notification delivered',
+  ADMIN_CREATED: 'Administrator account created',
+  DOCTOR_VERIFIED: 'Admin verified a doctor account',
 };
 
 const formatDateTime = (value: string) =>
@@ -56,44 +126,38 @@ const formatDateTime = (value: string) =>
     minute: '2-digit',
   }).format(new Date(value));
 
+const actionIcons: Record<AuditAction, typeof Eye> = {
+  USER_LOGIN: LogIn,
+  DOCUMENT_UPLOAD: FileUp,
+  DOCUMENT_ACCESS: Eye,
+  DOCUMENT_PREVIEW: FileSearch,
+  DOCUMENT_DOWNLOAD: Download,
+  DOCUMENT_SHARE: Share2,
+  DOCUMENT_UNSHARED: Link2Off,
+  DOCUMENT_DELETED: Trash2,
+  DOCUMENT_UPDATED: Pencil,
+  INTEGRITY_VERIFIED: ShieldCheck,
+  CONSENT_REQUESTED: Share2,
+  CONSENT_APPROVED: CheckCircle2,
+  CONSENT_REJECTED: XCircle,
+  CONSENT_REVOKED: XCircle,
+  EMERGENCY_ACCESS_GRANTED: Siren,
+  EMERGENCY_ACCESS_REVOKED: XCircle,
+  EMERGENCY_ACCESS_EXPIRED: TimerOff,
+  PATIENT_LOOKUP: Search,
+  LAB_LINK_REQUESTED: Link2,
+  LAB_LINKED: Link2,
+  LAB_LINK_REJECTED: Link2Off,
+  LAB_UNLINKED: Link2Off,
+  LAB_REPORT_UPLOADED: FlaskConical,
+  NOTIFICATION_SENT: Bell,
+  ADMIN_CREATED: UserPlus,
+  DOCTOR_VERIFIED: BadgeCheck,
+};
+
 const AuditActionIcon = ({ action }: { action: AuditAction }) => {
-  if (action === 'USER_LOGIN') {
-    return <LogIn className="h-4 w-4" />;
-  }
-
-  if (action === 'DOCUMENT_UPLOAD') {
-    return <FileUp className="h-4 w-4" />;
-  }
-
-  if (action === 'DOCUMENT_SHARE') {
-    return <Share2 className="h-4 w-4" />;
-  }
-
-  if (action === 'CONSENT_APPROVED') {
-    return <CheckCircle2 className="h-4 w-4" />;
-  }
-
-  if (action === 'CONSENT_REJECTED' || action === 'CONSENT_REVOKED') {
-    return <XCircle className="h-4 w-4" />;
-  }
-
-  if (action === 'CONSENT_REQUESTED') {
-    return <Share2 className="h-4 w-4" />;
-  }
-
-  if (action === 'EMERGENCY_ACCESS_GRANTED') {
-    return <Siren className="h-4 w-4" />;
-  }
-
-  if (action === 'DOCUMENT_PREVIEW') {
-    return <FileSearch className="h-4 w-4" />;
-  }
-
-  if (action === 'DOCUMENT_DOWNLOAD') {
-    return <Download className="h-4 w-4" />;
-  }
-
-  return <Eye className="h-4 w-4" />;
+  const Icon = actionIcons[action];
+  return <Icon className="h-4 w-4" />;
 };
 
 export default function AdminDashboard() {
@@ -199,6 +263,20 @@ export default function AdminDashboard() {
                       {log.action === 'EMERGENCY_ACCESS_GRANTED' && log.metadata?.expiresAt ? (
                         <p className="mt-2 text-xs leading-5 text-rose-100/90">
                           Expires {formatDateTime(log.metadata.expiresAt)}
+                        </p>
+                      ) : null}
+                      {log.action === 'EMERGENCY_ACCESS_EXPIRED' && log.metadata?.expiresAt ? (
+                        <p className="mt-2 text-xs leading-5 text-slate-300">
+                          Expired {formatDateTime(log.metadata.expiresAt)}
+                        </p>
+                      ) : null}
+                      {log.action === 'INTEGRITY_VERIFIED' && log.metadata?.integrityVerified ? (
+                        <p
+                          className={`mt-2 text-xs font-semibold leading-5 ${
+                            log.metadata.integrityVerified === 'true' ? 'text-emerald-200' : 'text-rose-200'
+                          }`}
+                        >
+                          {log.metadata.integrityVerified === 'true' ? 'Result: hash matches blockchain' : 'Result: HASH MISMATCH'}
                         </p>
                       ) : null}
                     </div>
