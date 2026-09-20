@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import type { DocumentEncryption } from '../services/documentCrypto.service';
 
 export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
@@ -36,6 +37,14 @@ export interface IMedicalDocument extends Document {
   blockchainDocumentId?: string;
   blockchainTxHash?: string;
   blockchainRegisteredAt?: Date;
+  /**
+   * Encryption-at-rest metadata (server-internal, never serialized). Absent on legacy rows whose file is
+   * still plaintext on disk; the migration script (`npm run migrate:encrypt`) fills it in. The DEK is
+   * stored only in wrapped form — see services/documentCrypto.service.ts.
+   */
+  encryption?: DocumentEncryption;
+  /** Plaintext byte length, recorded at encryption time so Content-Length needs no arithmetic. */
+  plaintextSize?: number;
   // --- Verified lab report fields: all optional, present only when uploadedByLab is set ---
   /** The lab account that issued the report; undefined for patient uploads. */
   uploadedByLab?: Types.ObjectId;
@@ -51,6 +60,16 @@ export interface IMedicalDocument extends Document {
 }
 
 const REPORT_TEXT_MAX_LENGTH = 120;
+
+const documentEncryptionSchema = new Schema<DocumentEncryption>(
+  {
+    version: { type: Number, required: true, enum: [1] },
+    algorithm: { type: String, required: true, enum: ['AES-256-GCM'] },
+    keyId: { type: String, required: true, trim: true },
+    wrappedKey: { type: String, required: true },
+  },
+  { _id: false }
+);
 
 const testValueSchema = new Schema<ITestValue>(
   {
@@ -128,6 +147,8 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
       trim: true,
     },
     blockchainRegisteredAt: Date,
+    encryption: { type: documentEncryptionSchema, default: undefined },
+    plaintextSize: { type: Number, min: 0 },
     uploadedByLab: {
       type: Schema.Types.ObjectId,
       ref: 'User',

@@ -33,6 +33,8 @@ export interface MedicalDocument {
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
+  /** False only for legacy files the encryption migration has not reached yet — show a lock badge when true. */
+  encryptedAtRest: boolean;
   // --- Verified lab report fields: present only when uploadedByLab is set ---
   uploadedByLab?: User;
   labName?: string;

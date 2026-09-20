@@ -20,9 +20,10 @@ import { asyncHandler } from '../utils/asyncHandler.util';
 import { expireEmergencyAccesses, findActiveEmergencyAccess } from '../utils/emergencyAccess.util';
 import { findApprovedConsent } from '../utils/consent.util';
 import { UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
-import { calculateFileSha256, SHA_256 } from '../utils/documentHash.util';
+import { SHA_256 } from '../utils/documentHash.util';
 import { getRegisteredDocumentHash } from '../services/documentRegistry.service';
 import { DocumentIngestError, discardUploadedFile, ingestUploadedDocument } from '../services/documentIngest.service';
+import { hashPlaintextFile, openDecryptedStream, verifyEncryptedFile, VaultFileError } from '../services/documentCrypto.service';
 import { emitAppEvent, eventBase } from '../events/appEvents';
 
 /** Projection for every populated user reference in document responses. Must cover everything SafeUser needs. */
@@ -60,6 +61,8 @@ export interface MedicalDocumentResponse {
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
+  /** False only for legacy rows the encryption migration has not reached yet. */
+  encryptedAtRest: boolean;
   uploadedByLab?: SafeUser;
   labName?: string;
   testName?: string;
@@ -118,6 +121,7 @@ export const serializeMedicalDocument = (document: IMedicalDocument): MedicalDoc
     hashAlgorithm: document.hashAlgorithm,
     blockchainTxHash: document.blockchainTxHash,
     blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
+    encryptedAtRest: Boolean(document.encryption),
     ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers) : {}),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
@@ -331,10 +335,26 @@ const streamDocumentFile = async (
     return;
   }
 
+  let contentLength = fileStats.size;
+
+  if (document.encryption) {
+    // Pass 1: authenticate the whole file before a single byte is sent. GCM would otherwise let us stream
+    // unverified plaintext and only discover tampering at the end, after a 200 has gone out.
+    try {
+      contentLength = (await verifyEncryptedFile(resolvedFilePath, document.encryption, document._id.toString())).plaintextSize;
+    } catch (error) {
+      if (respondToVaultError(res, error)) {
+        return;
+      }
+
+      throw error;
+    }
+  }
+
   const safeFileName = getSafeDownloadFileName(document.originalFileName || document.storedFileName);
 
   res.setHeader('Content-Type', document.mimeType);
-  res.setHeader('Content-Length', fileStats.size.toString());
+  res.setHeader('Content-Length', contentLength.toString());
   res.setHeader('Content-Disposition', `${disposition}; filename="${safeFileName}"`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
@@ -346,10 +366,42 @@ const streamDocumentFile = async (
     metadata: getDocumentAccessAuditMetadata(accessDecision, document.uploadedBy.toString()),
   });
 
-  const fileStream = createReadStream(resolvedFilePath);
-  fileStream.on('error', next);
+  // Pass 2 (or the only pass for a legacy plaintext file): stream to the client.
+  const fileStream = document.encryption
+    ? await openDecryptedStream(resolvedFilePath, document.encryption, document._id.toString())
+    : createReadStream(resolvedFilePath);
+
+  fileStream.on('error', (error) => {
+    // Headers are already out; the only honest outcome is a broken transfer, never a fake success.
+    res.destroy(error);
+    next(error);
+  });
   fileStream.pipe(res);
 };
+
+export const VAULT_INTEGRITY_FAILURE_MESSAGE = 'Document file failed integrity check';
+export const VAULT_KEY_UNAVAILABLE_MESSAGE = 'Document encryption key is unavailable';
+
+/** Maps a decryption failure to a response. Returns false for errors that are not vault errors. */
+const respondToVaultError = (res: Response, error: unknown): boolean => {
+  if (!(error instanceof VaultFileError)) {
+    return false;
+  }
+
+  if (error.code === 'KEY_UNAVAILABLE') {
+    res.status(503).json({ message: VAULT_KEY_UNAVAILABLE_MESSAGE });
+    return true;
+  }
+
+  res.status(409).json({ message: VAULT_INTEGRITY_FAILURE_MESSAGE });
+  return true;
+};
+
+/** SHA-256 of the document's PLAINTEXT — decrypting when needed — for comparison with the chain. */
+const hashDocumentPlaintext = async (document: IMedicalDocument, resolvedFilePath: string): Promise<string> =>
+  document.encryption
+    ? (await verifyEncryptedFile(resolvedFilePath, document.encryption, document._id.toString())).sha256
+    : hashPlaintextFile(resolvedFilePath);
 
 export const listDoctors: RequestHandler = asyncHandler(async (_req, res) => {
   const doctors = await User.find({ role: 'doctor' }).sort({ name: 1 });
@@ -533,7 +585,19 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
   }
 
   try {
-    const currentHash = await calculateFileSha256(resolvedFilePath);
+    let currentHash: string;
+
+    try {
+      currentHash = await hashDocumentPlaintext(document, resolvedFilePath);
+    } catch (error) {
+      // An encrypted file that fails authentication cannot yield a hash at all — that is itself the finding.
+      if (respondToVaultError(res, error)) {
+        return;
+      }
+
+      throw error;
+    }
+
     const blockchainRecord = await getRegisteredDocumentHash(document.blockchainDocumentId);
 
     if (!blockchainRecord) {

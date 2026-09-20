@@ -8,7 +8,9 @@ import { AccessLog, type AuditAction } from '../models/AccessLog';
 import { MedicalDocument, type IMedicalDocument, type MedicalDocumentMimeType } from '../models/MedicalDocument';
 import { User, type IUser } from '../models/User';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
+import { ENCRYPTED_FILE_SUFFIX, encryptFileToVault } from '../services/documentCrypto.service';
 import type { UserRole } from '../types/user.types';
+import { SHA_256 } from './documentHash.util';
 
 interface DemoAccount {
   name: string;
@@ -732,24 +734,47 @@ const ensureDemoDocument = async (
     .map((email) => userByEmail.get(email)?._id)
     .filter((doctorId): doctorId is Types.ObjectId => Boolean(doctorId));
   const fileBuffer = createAssetBuffer(documentSeed);
-  const filePath = path.join(UPLOAD_DIRECTORY, documentSeed.storedFileName);
+  const plaintextPath = path.join(UPLOAD_DIRECTORY, documentSeed.storedFileName);
+  const encryptedFileName = `${documentSeed.storedFileName}${ENCRYPTED_FILE_SUFFIX}`;
 
   await fs.mkdir(UPLOAD_DIRECTORY, { recursive: true });
-  await fs.writeFile(filePath, fileBuffer);
+  await fs.writeFile(plaintextPath, fileBuffer);
 
-  const existingDocument = await MedicalDocument.findOne({ storedFileName: documentSeed.storedFileName });
+  // Match a row from before encryption (plaintext name) as well as an already-encrypted one.
+  const existingDocument = await MedicalDocument.findOne({
+    storedFileName: { $in: [documentSeed.storedFileName, encryptedFileName] },
+  });
+  const documentId = existingDocument?._id ?? new Types.ObjectId();
+
+  // Demo files are encrypted at rest exactly like uploads. `encrypted.sha256` is the SHA-256 of the
+  // PLAINTEXT (computed while encrypting) and is what `documentHash` records.
+  // NOTE FOR ON-CHAIN SEED REGISTRATION (Shastri): register THIS value — the plaintext hash — for the
+  // document id `documentId`. Never hash the `.enc` file on disk; integrity verification decrypts and
+  // re-hashes the plaintext, so a ciphertext hash on-chain would fail every check.
+  const encrypted = await encryptFileToVault({
+    sourcePath: plaintextPath,
+    targetDirectory: UPLOAD_DIRECTORY,
+    baseFileName: documentSeed.storedFileName,
+    documentId: documentId.toString(),
+  });
+  await fs.unlink(plaintextPath);
+
   const documentPayload = {
     title: documentSeed.title,
     originalFileName: documentSeed.originalFileName,
-    storedFileName: documentSeed.storedFileName,
-    filePath: getStoredDocumentPath(documentSeed.storedFileName),
+    storedFileName: encrypted.storedFileName,
+    filePath: getStoredDocumentPath(encrypted.storedFileName),
     mimeType: documentSeed.mimeType,
     uploadedBy: owner._id,
     sharedWithDoctors,
+    documentHash: encrypted.sha256,
+    hashAlgorithm: SHA_256,
+    encryption: encrypted.encryption,
+    plaintextSize: encrypted.plaintextSize,
   };
 
   if (!existingDocument) {
-    const createdDocument = await MedicalDocument.create(documentPayload);
+    const createdDocument = await MedicalDocument.create({ _id: documentId, ...documentPayload });
     await MedicalDocument.updateOne(
       { _id: createdDocument._id },
       {
