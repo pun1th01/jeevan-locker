@@ -4,7 +4,6 @@ import {
   getMyConsents,
   getPendingConsents,
   getReceivedConsents,
-  listConsentTargets,
   rejectConsent,
   requestConsent,
   revokeConsent,
@@ -14,8 +13,8 @@ import { requireRole, verifyToken } from '../middleware/auth.middleware';
 const router = Router();
 
 router.use(verifyToken);
+// TODO(Task 2, item 7 — doctor verification gate): add `requireVerifiedDoctor` after requireRole('doctor') on /request.
 router.post('/request', requireRole('doctor'), requestConsent);
-router.get('/targets', requireRole('doctor'), listConsentTargets);
 router.get('/my', requireRole('doctor'), getMyConsents);
 router.get('/pending', requireRole('patient'), getPendingConsents);
 router.get('/received', requireRole('patient'), getReceivedConsents);

@@ -11,8 +11,8 @@ import { documentService } from '../../services/document.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
 import { consentService } from '../../services/consent.service';
 import type { MedicalDocument } from '../../types/document';
-import type { EmergencyAccess, EmergencyAccessTarget, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
-import type { ConsentGrant, ConsentTarget, RequestConsentInput } from '../../types/consent';
+import type { EmergencyAccess, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
+import type { ConsentGrant, RequestConsentInput } from '../../types/consent';
 
 export default function DoctorDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -22,16 +22,12 @@ export default function DoctorDashboard() {
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [accessNotice, setAccessNotice] = useState<string | null>(null);
-  const [emergencyTargets, setEmergencyTargets] = useState<EmergencyAccessTarget[]>([]);
-  const [isLoadingEmergencyTargets, setIsLoadingEmergencyTargets] = useState(true);
   const [isEmergencyDialogOpen, setIsEmergencyDialogOpen] = useState(false);
   const [isGrantingEmergencyAccess, setIsGrantingEmergencyAccess] = useState(false);
   const [emergencyError, setEmergencyError] = useState<string | null>(null);
   const [emergencyNotice, setEmergencyNotice] = useState<string | null>(null);
   const [activeEmergencyAccess, setActiveEmergencyAccess] = useState<EmergencyAccess | null>(null);
-  const [consentTargets, setConsentTargets] = useState<ConsentTarget[]>([]);
   const [myConsents, setMyConsents] = useState<ConsentGrant[]>([]);
-  const [isLoadingConsentTargets, setIsLoadingConsentTargets] = useState(true);
   const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
   const [isRequestingConsent, setIsRequestingConsent] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -58,40 +54,22 @@ export default function DoctorDashboard() {
     }
   }, []);
 
-  const loadEmergencyTargets = useCallback(async () => {
-    setIsLoadingEmergencyTargets(true);
-
+  const loadMyConsents = useCallback(async () => {
     try {
-      setEmergencyTargets(await emergencyAccessService.getTargets());
-    } catch (error) {
-      setEmergencyError(getApiErrorMessage(error));
-    } finally {
-      setIsLoadingEmergencyTargets(false);
-    }
-  }, []);
-
-  const loadConsentData = useCallback(async () => {
-    setIsLoadingConsentTargets(true);
-    try {
-      const [targets, consents] = await Promise.all([consentService.getTargets(), consentService.getMine()]);
-      setConsentTargets(targets);
-      setMyConsents(consents);
+      setMyConsents(await consentService.getMine());
     } catch (error) {
       setConsentError(getApiErrorMessage(error));
-    } finally {
-      setIsLoadingConsentTargets(false);
     }
   }, []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadDocuments();
-      void loadEmergencyTargets();
-      void loadConsentData();
+      void loadMyConsents();
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loadConsentData, loadDocuments, loadEmergencyTargets]);
+  }, [loadDocuments, loadMyConsents]);
 
   useEffect(() => {
     if (!accessNotice) {
@@ -141,9 +119,6 @@ export default function DoctorDashboard() {
     try {
       const { emergencyAccess } = await emergencyAccessService.grant(input);
       setActiveEmergencyAccess(emergencyAccess);
-      setEmergencyTargets((currentTargets) =>
-        currentTargets.filter((target) => target.document.id !== emergencyAccess.documentId)
-      );
       setEmergencyNotice('Emergency access granted. Access expires in 15 minutes and all activity is logged.');
 
       try {
@@ -322,9 +297,7 @@ export default function DoctorDashboard() {
 
       <EmergencyAccessModal
         isOpen={isEmergencyDialogOpen}
-        isLoadingTargets={isLoadingEmergencyTargets}
         isGranting={isGrantingEmergencyAccess}
-        targets={emergencyTargets}
         error={emergencyError}
         onClose={() => setIsEmergencyDialogOpen(false)}
         onGrant={handleGrantEmergencyAccess}
@@ -332,9 +305,7 @@ export default function DoctorDashboard() {
 
       <ConsentRequestModal
         isOpen={isConsentDialogOpen}
-        isLoadingTargets={isLoadingConsentTargets}
         isRequesting={isRequestingConsent}
-        targets={consentTargets}
         error={consentError}
         onClose={() => setIsConsentDialogOpen(false)}
         onRequest={handleRequestConsent}

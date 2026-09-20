@@ -1,12 +1,8 @@
 import { api } from '../lib/api';
-import type { ConsentGrant, ConsentTarget, RequestConsentInput } from '../types/consent';
+import type { ConsentGrant, RequestConsentInput } from '../types/consent';
 
 interface ConsentsResponse {
   consents: ConsentGrant[];
-}
-
-interface TargetsResponse {
-  targets: ConsentTarget[];
 }
 
 interface ConsentResponse {
@@ -15,10 +11,6 @@ interface ConsentResponse {
 }
 
 export const consentService = {
-  async getTargets(): Promise<ConsentTarget[]> {
-    const { data } = await api.get<TargetsResponse>('/consents/targets');
-    return data.targets;
-  },
   async getMine(): Promise<ConsentGrant[]> {
     const { data } = await api.get<ConsentsResponse>('/consents/my');
     return data.consents;

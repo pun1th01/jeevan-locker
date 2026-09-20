@@ -13,11 +13,6 @@ export interface ConsentGrant {
   revokedAt?: string;
 }
 
-export interface ConsentTarget {
-  patient: { id: string; name: string };
-  document: { id: string; title: string };
-}
-
 export interface RequestConsentInput {
   patientId: string;
   documentId: string;

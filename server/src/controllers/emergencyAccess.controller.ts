@@ -6,6 +6,7 @@ import { User } from '../models/User';
 import type { AuthenticatedRequest } from '../types/auth.types';
 import { createAuditLog, getRequestIpAddress } from '../utils/audit.util';
 import { asyncHandler } from '../utils/asyncHandler.util';
+import { findApprovedConsent } from '../utils/consent.util';
 import {
   EMERGENCY_ACCESS_DURATION_MS,
   EMERGENCY_ACCESS_DURATION_MINUTES,
@@ -23,12 +24,6 @@ interface EmergencyAccessResponse {
   expiresAt: string;
 }
 
-interface PopulatedPatient {
-  _id: Types.ObjectId;
-  name: string;
-  role: string;
-}
-
 const getAuthenticatedDoctor = (req: AuthenticatedRequest) => req.user ?? null;
 
 const serializeEmergencyAccess = (emergencyAccess: IEmergencyAccess): EmergencyAccessResponse => ({
@@ -43,44 +38,6 @@ const serializeEmergencyAccess = (emergencyAccess: IEmergencyAccess): EmergencyA
 });
 
 const getRequestString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
-
-export const listEmergencyAccessTargets: RequestHandler = asyncHandler(async (req, res) => {
-  const doctor = getAuthenticatedDoctor(req as AuthenticatedRequest);
-
-  if (!doctor) {
-    res.status(401).json({ message: 'Authentication is required' });
-    return;
-  }
-
-  const documents = await MedicalDocument.find({ sharedWithDoctors: { $ne: doctor.id } })
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .select('title uploadedBy')
-    .populate('uploadedBy', 'name role');
-
-  const targets = documents.flatMap((document) => {
-    const patient = document.uploadedBy as unknown as PopulatedPatient;
-
-    if (!patient || patient.role !== 'patient') {
-      return [];
-    }
-
-    return [
-      {
-        patient: {
-          id: patient._id.toString(),
-          name: patient.name,
-        },
-        document: {
-          id: document._id.toString(),
-          title: document.title,
-        },
-      },
-    ];
-  });
-
-  res.json({ targets });
-});
 
 export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res) => {
   const doctor = getAuthenticatedDoctor(req as AuthenticatedRequest);
@@ -131,6 +88,13 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
 
   if (document.sharedWithDoctors.some((sharedDoctorId) => sharedDoctorId.equals(doctor.id))) {
     res.status(409).json({ message: 'This doctor already has normal access to the selected document' });
+    return;
+  }
+
+  // Approved consent already grants access; break-glass on top of it would only add an unaudited-looking path.
+  // A PENDING consent is deliberately NOT blocked: emergency access is the escalation while the patient hasn't answered.
+  if (await findApprovedConsent(doctor.id, document._id)) {
+    res.status(409).json({ message: 'This doctor already has patient-approved consent for the selected document' });
     return;
   }
 

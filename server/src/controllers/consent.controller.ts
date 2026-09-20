@@ -72,31 +72,6 @@ const auditConsent = async (
   });
 };
 
-export const listConsentTargets: RequestHandler = asyncHandler(async (req, res) => {
-  const doctor = getUser(req as AuthenticatedRequest);
-  if (!doctor) {
-    res.status(401).json({ message: 'Authentication is required' });
-    return;
-  }
-
-  const documents = await MedicalDocument.find({ sharedWithDoctors: { $ne: doctor.id } })
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .select('title uploadedBy')
-    .populate('uploadedBy', 'name role');
-
-  const targets = documents.flatMap((document) => {
-    const patient = document.uploadedBy as unknown as PopulatedUser;
-    if (!patient || patient.role !== 'patient') {
-      return [];
-    }
-
-    return [{ patient: { id: patient._id.toString(), name: patient.name }, document: { id: document._id.toString(), title: document.title } }];
-  });
-
-  res.json({ targets });
-});
-
 export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
   const doctor = getUser(req as AuthenticatedRequest);
   if (!doctor) {

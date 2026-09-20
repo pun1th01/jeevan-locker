@@ -1,40 +1,33 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlertCircle, Loader2, Siren, X } from 'lucide-react';
-import { type FormEvent, useMemo, useState } from 'react';
-import type { EmergencyAccessTarget, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
+import { type FormEvent, useState } from 'react';
+import type { GrantEmergencyAccessInput } from '../../types/emergencyAccess';
+import type { PatientDocumentAccess, PatientDocumentSelection } from '../../types/patient';
+import PatientLookupField from '../patients/PatientLookupField';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 
 interface EmergencyAccessModalProps {
   isOpen: boolean;
-  isLoadingTargets: boolean;
   isGranting: boolean;
-  targets: EmergencyAccessTarget[];
   error: string | null;
   onClose: () => void;
   onGrant: (input: GrantEmergencyAccessInput) => Promise<void>;
 }
 
-export default function EmergencyAccessModal({
-  isOpen,
-  isLoadingTargets,
-  isGranting,
-  targets,
-  error,
-  onClose,
-  onGrant,
-}: EmergencyAccessModalProps) {
-  const [selectedDocumentId, setSelectedDocumentId] = useState('');
+/**
+ * Break-glass is the escalation path while a consent request is still pending, so 'consent_pending' stays
+ * selectable. Shared / approved already grant access (server 409s), and a live grant needs no second one.
+ */
+const EMERGENCY_SELECTABLE_STATUSES: readonly PatientDocumentAccess[] = ['none', 'consent_pending'];
+
+export default function EmergencyAccessModal({ isOpen, isGranting, error, onClose, onGrant }: EmergencyAccessModalProps) {
+  const [selection, setSelection] = useState<PatientDocumentSelection | null>(null);
   const [reason, setReason] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const selectedTarget = useMemo(
-    () => targets.find((target) => target.document.id === selectedDocumentId) ?? null,
-    [selectedDocumentId, targets]
-  );
-
   const resetAndClose = () => {
-    setSelectedDocumentId('');
+    setSelection(null);
     setReason('');
     setValidationError(null);
     onClose();
@@ -49,8 +42,8 @@ export default function EmergencyAccessModal({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!selectedTarget) {
-      setValidationError('Select a patient document before granting emergency access.');
+    if (!selection) {
+      setValidationError('Look up a patient and select a document before granting emergency access.');
       return;
     }
 
@@ -61,8 +54,8 @@ export default function EmergencyAccessModal({
 
     setValidationError(null);
     await onGrant({
-      patientId: selectedTarget.patient.id,
-      documentId: selectedTarget.document.id,
+      patientId: selection.patient.id,
+      documentId: selection.document.id,
       reason: reason.trim(),
     });
     resetAndClose();
@@ -72,7 +65,7 @@ export default function EmergencyAccessModal({
     <Dialog.Root open={isOpen} onOpenChange={(open) => (!open ? closeModal() : undefined)}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-rose-300/25 bg-slate-900 shadow-2xl shadow-rose-950/30 outline-none sm:w-full">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[92vh] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-rose-300/25 bg-slate-900 shadow-2xl shadow-rose-950/30 outline-none sm:w-full">
           <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-5">
             <div>
               <div className="flex items-center gap-2 text-rose-100">
@@ -82,7 +75,7 @@ export default function EmergencyAccessModal({
                 <Dialog.Title className="text-lg font-semibold">Emergency Access</Dialog.Title>
               </div>
               <Dialog.Description className="mt-3 text-sm leading-6 text-slate-400">
-                Use Break-Glass only for an immediate clinical emergency. This action is audited.
+                Use Break-Glass only for an immediate clinical emergency. Look up the patient, choose the document, and state the reason. This action is audited.
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -92,42 +85,21 @@ export default function EmergencyAccessModal({
             </Dialog.Close>
           </div>
 
-          <form className="space-y-5 px-6 py-5" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <Label htmlFor="emergency-document">Patient document</Label>
-              {isLoadingTargets ? (
-                <div className="flex h-11 items-center gap-2 rounded-md border border-white/10 bg-slate-950/60 px-3 text-sm text-slate-400">
-                  <Loader2 className="h-4 w-4 animate-spin text-rose-200" />
-                  Loading available emergency records...
-                </div>
-              ) : (
-                <select
-                  id="emergency-document"
-                  value={selectedDocumentId}
-                  onChange={(event) => {
-                    setSelectedDocumentId(event.target.value);
-                    setValidationError(null);
-                  }}
-                  disabled={isGranting || targets.length === 0}
-                  className="h-11 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-slate-100 outline-none transition-colors focus:border-rose-300 focus:ring-2 focus:ring-rose-300/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value="">Select patient and document</option>
-                  {targets.map((target) => (
-                    <option key={target.document.id} value={target.document.id}>
-                      {target.patient.name} — {target.document.title}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {!isLoadingTargets && targets.length === 0 ? (
-                <p className="text-sm text-slate-500">No emergency target documents are currently available.</p>
-              ) : null}
-            </div>
+          <form className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={handleSubmit}>
+            <PatientLookupField
+              selectableStatuses={EMERGENCY_SELECTABLE_STATUSES}
+              accent="rose"
+              disabled={isGranting}
+              onSelectionChange={(nextSelection) => {
+                setSelection(nextSelection);
+                setValidationError(null);
+              }}
+            />
 
-            {selectedTarget ? (
+            {selection ? (
               <div className="rounded-md border border-rose-300/15 bg-rose-300/[0.04] p-4 text-sm">
-                <p className="font-semibold text-white">Patient: {selectedTarget.patient.name}</p>
-                <p className="mt-2 text-slate-300">Document: {selectedTarget.document.title}</p>
+                <p className="font-semibold text-white">Patient: {selection.patient.name}</p>
+                <p className="mt-2 text-slate-300">Document: {selection.document.title}</p>
               </div>
             ) : null}
 
@@ -163,7 +135,7 @@ export default function EmergencyAccessModal({
               <Button type="button" variant="secondary" onClick={closeModal} disabled={isGranting}>
                 Cancel
               </Button>
-              <Button type="submit" variant="destructive" disabled={isGranting || isLoadingTargets || targets.length === 0}>
+              <Button type="submit" variant="destructive" disabled={isGranting || !selection}>
                 {isGranting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Siren className="h-4 w-4" />}
                 {isGranting ? 'Granting access...' : 'Grant Emergency Access'}
               </Button>
