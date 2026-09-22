@@ -4,6 +4,7 @@ import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import DocumentUploadModal from '../../components/documents/DocumentUploadModal';
+import EmergencyAccessPanel from '../../components/emergency/EmergencyAccessPanel';
 import { Button } from '../../components/ui/button';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
@@ -315,6 +316,8 @@ export default function PatientDashboard() {
             </div>
           ) : <div className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-5 text-sm text-slate-400">No pending document access requests.</div>}
         </div>
+
+        <EmergencyAccessPanel />
 
         <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
           <h2 className="text-lg font-semibold text-white">Selected Record</h2>

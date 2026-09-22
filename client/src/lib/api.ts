@@ -43,6 +43,11 @@ api.interceptors.response.use(
   }
 );
 
+/** HTTP status of a failed request, or null when it never reached the server. Lets a caller treat a
+ * specific status as a normal outcome (e.g. a 409 that just means "already done") instead of an error. */
+export const getApiErrorStatus = (error: unknown): number | null =>
+  axios.isAxiosError(error) ? error.response?.status ?? null : null;
+
 export const getApiErrorMessage = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
     if (error.code === 'ERR_NETWORK') {
