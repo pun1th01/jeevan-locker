@@ -120,9 +120,10 @@ export default function DoctorDashboard() {
     setEmergencyError(null);
 
     try {
-      const { emergencyAccess } = await emergencyAccessService.grant(input);
+      const { message, emergencyAccess } = await emergencyAccessService.grant(input);
       setActiveEmergencyAccess(emergencyAccess);
-      setEmergencyNotice('Emergency access granted. Access expires in 15 minutes and all activity is logged.');
+      // The server states the configured window; do not restate it here or the two drift apart.
+      setEmergencyNotice(`${message}. All activity is logged, and the patient can end it sooner.`);
 
       try {
         const document = await documentService.getDocument(emergencyAccess.documentId);

@@ -121,7 +121,7 @@ export default function EmergencyAccessModal({ isOpen, isGranting, error, onClos
             </div>
 
             <div className="rounded-md border border-amber-300/20 bg-amber-300/10 px-3 py-3 text-sm leading-6 text-amber-100">
-              Emergency access remains active for 15 minutes. The grant and every subsequent document access are logged.
+              Emergency access is time-limited and expires on its own; the patient can also end it sooner. The grant and every subsequent document access are logged.
             </div>
 
             {validationError || error ? (

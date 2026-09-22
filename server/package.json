@@ -10,6 +10,7 @@
     "create:admin": "tsx src/scripts/createUser.ts --role admin",
     "create:lab": "tsx src/scripts/createUser.ts --role lab",
     "migrate:encrypt": "tsx src/scripts/encryptExistingDocuments.ts",
+    "verify:anchors": "tsx src/scripts/verifyAnchorPreimages.ts",
     "chain": "hardhat node",
     "chain:compile": "hardhat compile",
     "chain:deploy": "hardhat run scripts/deploy-document-registry.js --network localhost",

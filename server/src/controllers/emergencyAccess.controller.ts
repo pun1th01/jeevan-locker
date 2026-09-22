@@ -12,11 +12,11 @@ import { emitAppEvent, eventBase } from '../events/appEvents';
 import { enqueueEmergencyAnchor } from '../services/anchorQueue.service';
 import { serializeAnchorReferences, type AnchorReferenceResponse } from '../utils/anchors.util';
 import {
-  EMERGENCY_ACCESS_DURATION_MS,
-  EMERGENCY_ACCESS_DURATION_MINUTES,
   countActiveEmergencyAccesses,
+  emergencyAccessDurationMs,
   expireEmergencyAccesses,
   findActiveEmergencyAccess,
+  formatEmergencyDuration,
   maxActiveEmergencyGrants,
   regrantWindowMs,
 } from '../utils/emergencyAccess.util';
@@ -173,7 +173,7 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
     revokedAt: { $gte: new Date(Date.now() - regrantWindowMs()) },
   }).sort({ revokedAt: -1 });
 
-  const expiresAt = new Date(Date.now() + EMERGENCY_ACCESS_DURATION_MS);
+  const expiresAt = new Date(Date.now() + emergencyAccessDurationMs());
   const emergencyAccess = await EmergencyAccess.create({
     doctorId: doctor.id,
     patientId: patient._id,
@@ -224,7 +224,7 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
   });
 
   res.status(201).json({
-    message: `Emergency access granted for ${EMERGENCY_ACCESS_DURATION_MINUTES} minutes`,
+    message: `Emergency access granted for ${formatEmergencyDuration()}`,
     emergencyAccess: serializeEmergencyAccess(emergencyAccess),
   });
 });

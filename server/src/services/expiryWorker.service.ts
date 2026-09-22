@@ -1,4 +1,4 @@
-import { expireDueGrants } from '../utils/emergencyAccess.util';
+import { expireDueGrants, readPositiveIntSetting } from '../utils/emergencyAccess.util';
 
 /**
  * Expires lapsed break-glass grants on a schedule, so a grant ends on time whether or not the doctor
@@ -16,14 +16,9 @@ import { expireDueGrants } from '../utils/emergencyAccess.util';
 
 const DEFAULTS = { pollMs: 60_000, batchLimit: 200 } as const;
 
-const readPositiveInt = (name: string, fallback: number) => {
-  const value = Number(process.env[name]);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
-};
-
 export const readExpiryWorkerConfig = () => ({
-  pollMs: readPositiveInt('EMERGENCY_EXPIRY_POLL_MS', DEFAULTS.pollMs),
-  batchLimit: readPositiveInt('EMERGENCY_EXPIRY_BATCH_LIMIT', DEFAULTS.batchLimit),
+  pollMs: readPositiveIntSetting('EMERGENCY_EXPIRY_POLL_MS', DEFAULTS.pollMs),
+  batchLimit: readPositiveIntSetting('EMERGENCY_EXPIRY_BATCH_LIMIT', DEFAULTS.batchLimit),
 });
 
 /**

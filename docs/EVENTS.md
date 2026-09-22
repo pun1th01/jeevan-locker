@@ -71,7 +71,7 @@ export interface AppEventMap {
 ```
 
 Notes:
-- `expiresAt` (emergency) is ISO 8601 — the grant lasts 15 minutes from `occurredAt`.
+- `expiresAt` (emergency) is ISO 8601 — the grant lasts `EMERGENCY_ACCESS_DURATION_MINUTES` (default 15) from `occurredAt`. Render the field; do not hard-code the number.
 - `organisation` on `lab.link.requested` is present only when the lab account has one (labs always do; the key is omitted, not `undefined`, when absent).
 - `criticalCount` is the number of `testValues` entries flagged `critical` on the uploaded report (0 when none, or when no test values were supplied).
 - `consent.*` events for `approved`/`rejected`/`revoked` carry `documentTitle` looked up at emit time; if the document has since been deleted (no delete endpoint exists in Phase 0) it falls back to `"a document"`.

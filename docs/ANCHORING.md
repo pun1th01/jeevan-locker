@@ -36,6 +36,8 @@ The preimage is a JSON object serialized by `JSON.stringify` with **no whitespac
 {"v":1,"type":"emergency","event":"GRANTED","emergencyAccessId":<id>,"doctorId":<id>,"patientId":<id>,"documentId":<id>,"documentHash":<hex|null>,"reason":<string>,"createdAt":<ISO>,"expiresAt":<ISO>}
 ```
 
+`expiresAt` is the grant window read off the row, whatever `EMERGENCY_ACCESS_DURATION_MINUTES` was when the grant was created. Configuring a different window changes that one **value**; it never changes the key order or the field set, so the bytes stay the format above and every anchor made under any setting still verifies.
+
 ### Emergency revocation (`REVOKED`)
 
 ```
@@ -102,7 +104,7 @@ If the patient then revokes that grant at `2026-09-21T22:07:05.220Z` (four minut
 ```
 digest `a667a8b1f962a04b0c6ce1ccada4d8262bee7f55b963cd6b3f1df4cdf7b9eec8`, record key `emergency:66f2a1b3c4d5e6f708192b77:REVOKED`, on-chain key `0x2c2cbf59063d57fb51f9a7f76eeff6964373bfe7c1c673dc879000e4f7e46808`. The grant and its revocation are two independent, write-once anchors: reading both tells you the session existed *and* that the patient ended it early, and neither can be altered afterwards.
 
-These values are produced by the server code and reproduced by the shell commands below; the project's verification script asserts they match on every run.
+These values are produced by the server code and reproduced by the shell commands below. `npm run verify:anchors` (in `server/`) rebuilds all three from `anchorPreimage.service.ts` and fails if any byte, digest or key drifts from what is printed here — it needs no database and no chain, so run it after touching anything in that file.
 
 ---
 

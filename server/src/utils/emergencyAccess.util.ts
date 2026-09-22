@@ -2,18 +2,62 @@ import { Types } from 'mongoose';
 import { EmergencyAccess } from '../models/EmergencyAccess';
 import { createAuditLog } from './audit.util';
 
-export const EMERGENCY_ACCESS_DURATION_MINUTES = 15;
-export const EMERGENCY_ACCESS_DURATION_MS = EMERGENCY_ACCESS_DURATION_MINUTES * 60 * 1000;
-
+export const DEFAULT_ACCESS_DURATION_MINUTES = 15;
 export const DEFAULT_MAX_ACTIVE_EMERGENCY_GRANTS = 5;
 export const DEFAULT_REGRANT_WINDOW_HOURS = 24;
 
 /** Audit rows written by background expiry have no request context, so they carry this marker instead of an IP. */
 export const SYSTEM_IP_ADDRESS = 'system';
 
+const warnedVariables = new Set<string>();
+
+/**
+ * Every break-glass knob is read here, at call time rather than at import time, so a value can be changed
+ * with a restart and nothing caches a stale copy. A variable that is set but unusable falls back to the
+ * default and says so once — silently running on 15 minutes when the .env says 1 is exactly the confusion
+ * this is meant to prevent.
+ */
 const readPositiveNumber = (name: string, fallback: number) => {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
+  const raw = process.env[name];
+  const value = Number(raw);
+
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (raw !== undefined && raw.trim() !== '' && !warnedVariables.has(name)) {
+    warnedVariables.add(name);
+    console.warn(`[emergency] ${name}="${raw}" is not a positive number; using ${fallback}`);
+  }
+
+  return fallback;
+};
+
+/** Same fallback-and-warn contract, for the knobs that must be whole numbers (the expiry worker's two). */
+export const readPositiveIntSetting = (name: string, fallback: number) => {
+  const value = readPositiveNumber(name, fallback);
+  return Number.isInteger(value) ? value : fallback;
+};
+
+/**
+ * How long one break-glass grant lasts (EMERGENCY_ACCESS_DURATION_MINUTES, default 15).
+ * Fractional values are allowed on purpose: a demo can set 0.5 and watch a grant expire in 30 seconds
+ * without touching source. The value only ever changes what `expiresAt` is set to — the timestamp is
+ * written to the row, so a grant keeps the window it was created under even if the setting changes later.
+ */
+export const emergencyAccessDurationMinutes = () => readPositiveNumber('EMERGENCY_ACCESS_DURATION_MINUTES', DEFAULT_ACCESS_DURATION_MINUTES);
+export const emergencyAccessDurationMs = () => emergencyAccessDurationMinutes() * 60 * 1000;
+
+/** Human wording for the grant response, so a sub-minute demo window does not read as "0.5 minutes". */
+export const formatEmergencyDuration = () => {
+  const minutes = emergencyAccessDurationMinutes();
+
+  if (minutes >= 1) {
+    return `${Number(minutes.toFixed(2))} minute${minutes === 1 ? '' : 's'}`;
+  }
+
+  const seconds = Math.round(minutes * 60);
+  return `${seconds} second${seconds === 1 ? '' : 's'}`;
 };
 
 /** How many live grants one doctor may hold at once, across all patients (EMERGENCY_MAX_ACTIVE_GRANTS). */
@@ -21,6 +65,10 @@ export const maxActiveEmergencyGrants = () => readPositiveNumber('EMERGENCY_MAX_
 
 /** How long after a revocation a new grant on the same doctor+document counts as a return (EMERGENCY_REGRANT_WINDOW_HOURS). */
 export const regrantWindowMs = () => readPositiveNumber('EMERGENCY_REGRANT_WINDOW_HOURS', DEFAULT_REGRANT_WINDOW_HOURS) * 60 * 60 * 1000;
+
+/** One boot line with the effective values, so a misspelt or ignored variable is visible before the demo. */
+export const emergencyAccessConfigSummary = () =>
+  `grant lasts ${formatEmergencyDuration()}, max ${maxActiveEmergencyGrants()} live grant(s) per doctor, re-grant flagged within ${regrantWindowMs() / (60 * 60 * 1000)}h of a revoke`;
 
 /** Live grants held by one doctor right now. Call after a lazy sweep so lapsed rows do not count. */
 export const countActiveEmergencyAccesses = (doctorId: string | Types.ObjectId) =>

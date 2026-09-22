@@ -2,7 +2,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 import { anchorReferenceSchema, type AnchorReference } from './ConsentGrant';
 
 /**
- * ACTIVE  -> EXPIRED  (the 15-minute window lapsed; scheduled job or the lazy path, exactly once)
+ * ACTIVE  -> EXPIRED  (the grant window on the row lapsed; scheduled job or the lazy path, exactly once)
  * ACTIVE  -> REVOKED  (the patient ended the session early)
  * Both transitions are terminal and guarded by an atomic status-conditioned update.
  */
