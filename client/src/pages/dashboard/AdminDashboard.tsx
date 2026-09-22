@@ -26,6 +26,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import AnchorPanel from '../../components/admin/AnchorPanel';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import { getApiErrorMessage } from '../../lib/api';
 import { auditService } from '../../services/audit.service';
@@ -347,6 +348,8 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      <AnchorPanel />
     </DashboardShell>
   );
 }
