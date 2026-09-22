@@ -8,6 +8,9 @@ export const EMERGENCY_ACCESS_DURATION_MS = EMERGENCY_ACCESS_DURATION_MINUTES * 
 export const DEFAULT_MAX_ACTIVE_EMERGENCY_GRANTS = 5;
 export const DEFAULT_REGRANT_WINDOW_HOURS = 24;
 
+/** Audit rows written by background expiry have no request context, so they carry this marker instead of an IP. */
+export const SYSTEM_IP_ADDRESS = 'system';
+
 const readPositiveNumber = (name: string, fallback: number) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -23,26 +26,44 @@ export const regrantWindowMs = () => readPositiveNumber('EMERGENCY_REGRANT_WINDO
 export const countActiveEmergencyAccesses = (doctorId: string | Types.ObjectId) =>
   EmergencyAccess.countDocuments({ doctorId, status: 'ACTIVE', expiresAt: { $gt: new Date() } });
 
-/** Audit rows written by background expiry have no request context, so they carry this marker instead of an IP. */
-export const SYSTEM_IP_ADDRESS = 'system';
+interface ExpireScope {
+  doctorId?: string | Types.ObjectId;
+  documentId?: string | Types.ObjectId;
+}
 
 /**
- * Marks lapsed ACTIVE grants as EXPIRED and writes one EMERGENCY_ACCESS_EXPIRED audit row per grant.
- * Each grant is flipped with an atomic status-guarded updateOne so concurrent callers never double-log.
+ * The one place a grant becomes EXPIRED. Every caller — the scheduled job and the lazy sweeps on the
+ * doctor's own reads — goes through this, which is what makes the audit row exactly-once:
+ *
+ *   updateOne({ _id, status: 'ACTIVE' }, { $set: { status: 'EXPIRED' } })
+ *
+ * is atomic per document, so of any number of concurrent callers exactly one gets modifiedCount 1 and
+ * writes the audit row; every other caller gets 0 and skips it. The same guard makes REVOKED terminal:
+ * a revoked grant matches neither the find filter nor the update filter, so expiry can never touch it.
+ *
+ * `limit` bounds one batch. Returns how many grants THIS caller actually expired.
  */
-export const expireEmergencyAccesses = async (doctorId: string | Types.ObjectId, documentId?: string | Types.ObjectId) => {
-  const lapsedGrants = await EmergencyAccess.find({
-    doctorId,
-    ...(documentId ? { documentId } : {}),
+const expireGrants = async (scope: ExpireScope, limit?: number): Promise<number> => {
+  const query = EmergencyAccess.find({
+    ...(scope.doctorId ? { doctorId: scope.doctorId } : {}),
+    ...(scope.documentId ? { documentId: scope.documentId } : {}),
     status: 'ACTIVE',
     expiresAt: { $lte: new Date() },
-  }).select('_id doctorId patientId documentId expiresAt');
+  })
+    .select('_id doctorId patientId documentId expiresAt')
+    .sort({ expiresAt: 1 });
 
-  for (const grant of lapsedGrants) {
+  if (limit !== undefined) {
+    query.limit(limit);
+  }
+
+  let expired = 0;
+
+  for (const grant of await query) {
     const result = await EmergencyAccess.updateOne({ _id: grant._id, status: 'ACTIVE' }, { $set: { status: 'EXPIRED' } });
 
     if (result.modifiedCount === 0) {
-      continue;
+      continue; // another caller (the job, or another request) won the race and is writing the audit row
     }
 
     await createAuditLog({
@@ -57,8 +78,23 @@ export const expireEmergencyAccesses = async (doctorId: string | Types.ObjectId,
         expiresAt: grant.expiresAt.toISOString(),
       },
     });
+    expired += 1;
   }
+
+  return expired;
 };
+
+/**
+ * Lazy sweep on a doctor's own reads. Kept as a fallback alongside the scheduled job: it cannot
+ * double-log (see the guard above), it costs one indexed query on paths that already touch this
+ * collection, and it means a doctor never sees a stale ACTIVE grant even if the job is stopped or the
+ * process has only just restarted.
+ */
+export const expireEmergencyAccesses = (doctorId: string | Types.ObjectId, documentId?: string | Types.ObjectId): Promise<number> =>
+  expireGrants({ doctorId, documentId });
+
+/** One batch for the scheduled job: every lapsed grant in the system, oldest expiry first. */
+export const expireDueGrants = (limit: number): Promise<number> => expireGrants({}, limit);
 
 export const findActiveEmergencyAccess = async (doctorId: string | Types.ObjectId, documentId: string | Types.ObjectId) => {
   await expireEmergencyAccesses(doctorId, documentId);

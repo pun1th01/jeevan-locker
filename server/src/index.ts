@@ -4,6 +4,7 @@ import { env } from './config/env';
 import { registerAppEventListeners } from './events/registerListeners';
 import { reconcileMissingAnchors } from './services/anchorQueue.service';
 import { startAnchorWorker, stopAnchorWorker } from './services/anchorWorker.service';
+import { startExpiryWorker, stopExpiryWorker } from './services/expiryWorker.service';
 import { verifyChainContractsAtBoot } from './services/chain.service';
 import { seedDemoUsers } from './utils/seedDemoUsers';
 
@@ -16,6 +17,8 @@ const startServer = async () => {
   // Re-derive any anchor rows lost between an audit write and its enqueue, then start draining.
   await reconcileMissingAnchors();
   startAnchorWorker();
+  // Ends lapsed break-glass grants on time, whether or not the doctor holding one comes back.
+  startExpiryWorker();
   
   if (env.nodeEnv === 'development') {
     await seedDemoUsers();
@@ -29,6 +32,7 @@ const startServer = async () => {
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopAnchorWorker();
+    stopExpiryWorker();
     process.exit(0);
   });
 }
