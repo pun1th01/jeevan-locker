@@ -57,15 +57,21 @@ export const buildConsentPreimage = (
   });
 };
 
-export const buildEmergencyPreimage = (
-  grant: Pick<IEmergencyAccess, '_id' | 'doctorId' | 'patientId' | 'documentId' | 'reason' | 'createdAt' | 'expiresAt'>,
-  event: EmergencyAnchorEvent,
-  documentHash: string | null
-): string =>
+type EmergencyGrantFields = Pick<IEmergencyAccess, '_id' | 'doctorId' | 'patientId' | 'documentId' | 'reason' | 'createdAt' | 'expiresAt'>;
+type EmergencyRevocationFields = EmergencyGrantFields & Pick<IEmergencyAccess, 'revokedAt' | 'revokedBy'>;
+
+/**
+ * GRANTED preimage. DO NOT CHANGE THESE BYTES — every grant anchored before this line was written
+ * verifies against exactly this layout, and docs/ANCHORING.md pins it with a worked example that the
+ * verification suite asserts. `afterRevocation` is deliberately absent: it is derivable from the
+ * anchored REVOKED event of the earlier grant plus this one, and adding it would break every
+ * existing anchor.
+ */
+export const buildEmergencyGrantedPreimage = (grant: EmergencyGrantFields, documentHash: string | null): string =>
   JSON.stringify({
     v: PREIMAGE_VERSION,
     type: 'emergency',
-    event,
+    event: 'GRANTED',
     emergencyAccessId: grant._id.toString(),
     doctorId: grant.doctorId.toString(),
     patientId: grant.patientId.toString(),
@@ -75,6 +81,47 @@ export const buildEmergencyPreimage = (
     createdAt: grant.createdAt.toISOString(),
     expiresAt: grant.expiresAt.toISOString(),
   });
+
+/**
+ * REVOKED preimage. `grantedAt` pins which grant instance this revokes; `revokedBy`/`revokedAt` are
+ * written once. `expiresAt` is absent on purpose — the grant ended early, so the original expiry is a
+ * property of the GRANTED event and is already anchored there. Returns null until the record is revoked.
+ */
+export const buildEmergencyRevokedPreimage = (grant: EmergencyRevocationFields, documentHash: string | null): string | null => {
+  if (!grant.revokedAt || !grant.revokedBy) {
+    return null;
+  }
+
+  return JSON.stringify({
+    v: PREIMAGE_VERSION,
+    type: 'emergency',
+    event: 'REVOKED',
+    emergencyAccessId: grant._id.toString(),
+    doctorId: grant.doctorId.toString(),
+    patientId: grant.patientId.toString(),
+    documentId: grant.documentId.toString(),
+    documentHash: documentHash ? documentHash.toLowerCase() : null,
+    grantedAt: grant.createdAt.toISOString(),
+    revokedBy: grant.revokedBy.toString(),
+    revokedAt: grant.revokedAt.toISOString(),
+  });
+};
+
+/** Returns null when the record has not reached that event yet. */
+export const buildEmergencyPreimage = (
+  grant: EmergencyRevocationFields,
+  event: EmergencyAnchorEvent,
+  documentHash: string | null
+): string | null =>
+  event === 'GRANTED' ? buildEmergencyGrantedPreimage(grant, documentHash) : buildEmergencyRevokedPreimage(grant, documentHash);
+
+/** Which emergency events a grant has actually reached — what the reconciliation sweep expects anchored. */
+export const emergencyEventsReached = (grant: Pick<IEmergencyAccess, 'revokedAt'>): EmergencyAnchorEvent[] =>
+  grant.revokedAt ? ['GRANTED', 'REVOKED'] : ['GRANTED'];
+
+/** Who caused each emergency event — the audit actor for a failed anchor. */
+export const emergencyEventActor = (grant: Pick<IEmergencyAccess, 'doctorId' | 'patientId'>, event: EmergencyAnchorEvent) =>
+  event === 'GRANTED' ? grant.doctorId : grant.patientId;
 
 /** Which consent events a record has actually reached — what the reconciliation sweep expects to find anchored. */
 export const consentEventsReached = (consent: Pick<IConsentGrant, 'requestedAt' | 'approvedAt' | 'rejectedAt' | 'revokedAt'>): ConsentAnchorEvent[] => {

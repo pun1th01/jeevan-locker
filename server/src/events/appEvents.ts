@@ -50,8 +50,13 @@ export interface AppEventMap {
     documentTitle: string;
     reason: string;
     expiresAt: string;
+    /**
+     * True when this grant re-opened access the patient had revoked within the last
+     * EMERGENCY_REGRANT_WINDOW_HOURS. `message` differs in that case — render both variants.
+     */
+    afterRevocation: boolean;
   };
-  /** Typed so the shape is fixed now; NOT emitted anywhere until a revoke feature exists. */
+  /** Recipient is the DOCTOR losing access; the actor is the patient who revoked it. */
   'emergency.revoked': AppEventBase & { documentId: string; emergencyAccessId: string; documentTitle: string };
   'document.shared': AppEventBase & { documentId: string; documentTitle: string };
   'lab.link.requested': AppEventBase & { documentId: null; labLinkId: string; labName: string; organisation?: string };

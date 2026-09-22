@@ -8,7 +8,7 @@ Related: [ENCRYPTION.md](ENCRYPTION.md) (documents at rest — the same "the cha
 
 ## 1. Summary
 
-Every time a consent request is **made, approved, rejected or revoked**, and every time a doctor **grants themselves emergency access**, the server builds a small, fixed-format text record of that event (the *preimage*), takes its SHA-256 digest, and writes the digest to a smart contract under a key derived from the record's id. The contract is write-once per key and timestamps each write with the block time.
+Every time a consent request is **made, approved, rejected or revoked**, every time a doctor **grants themselves emergency access**, and every time a patient **revokes that emergency access**, the server builds a small, fixed-format text record of that event (the *preimage*), takes its SHA-256 digest, and writes the digest to a smart contract under a key derived from the record's id. The contract is write-once per key and timestamps each write with the block time.
 
 Three things follow:
 
@@ -36,9 +36,19 @@ The preimage is a JSON object serialized by `JSON.stringify` with **no whitespac
 {"v":1,"type":"emergency","event":"GRANTED","emergencyAccessId":<id>,"doctorId":<id>,"patientId":<id>,"documentId":<id>,"documentHash":<hex|null>,"reason":<string>,"createdAt":<ISO>,"expiresAt":<ISO>}
 ```
 
+### Emergency revocation (`REVOKED`)
+
+```
+{"v":1,"type":"emergency","event":"REVOKED","emergencyAccessId":<id>,"doctorId":<id>,"patientId":<id>,"documentId":<id>,"documentHash":<hex|null>,"grantedAt":<ISO>,"revokedBy":<id>,"revokedAt":<ISO>}
+```
+
+`grantedAt` is the grant's `createdAt` and pins *which* grant instance this revocation ends. `expiresAt` is absent on purpose: the grant was cut short, so its original expiry is a property of the `GRANTED` event and is already anchored there. `revokedBy` is the patient.
+
+Two fields you will **not** find in any emergency preimage: `status` (it changes on the next transition) and `afterRevocation`. The latter marks a grant that re-opened access a patient had just revoked; it is deliberately kept off-chain because adding it to the `GRANTED` preimage would change those bytes and invalidate every anchor made before it existed — and because it is *derivable* from what is already anchored: a `REVOKED` event for that doctor+document followed by a later `GRANTED` event for the same pair is exactly what the flag summarises.
+
 ### Keys
 
-Off-chain record key (a plain string): `consent:<consentId>:<EVENT>` or `emergency:<emergencyAccessId>:GRANTED`.
+Off-chain record key (a plain string): `consent:<consentId>:<EVENT>` or `emergency:<emergencyAccessId>:<EVENT>`.
 On-chain key: `keccak256(utf8(record key))` — 32 bytes, what the contract's mapping is indexed by.
 
 ### Why these fields and not others
@@ -84,6 +94,13 @@ And for an emergency grant on the same document (`_id 66f2a1b3c4d5e6f708192b77`,
 {"v":1,"type":"emergency","event":"GRANTED","emergencyAccessId":"66f2a1b3c4d5e6f708192b77","doctorId":"66f2a1b3c4d5e6f708192a02","patientId":"66f2a1b3c4d5e6f708192a01","documentId":"66f2a1b3c4d5e6f708192a10","documentHash":"4cbcc0d60e005ca14a7ccd6e705bac955644327663c196cadcf1954cd851fd9e","reason":"Patient unconscious in ED","createdAt":"2026-09-21T22:03:41.000Z","expiresAt":"2026-09-21T22:18:41.000Z"}
 ```
 digest `93e8f759f1577b8f403e25d84dcb7b7b6fa5efe6fed2498362b40ecfbaa9e01f`, record key `emergency:66f2a1b3c4d5e6f708192b77:GRANTED`, on-chain key `0x3bb0c68d2a59886fb82f5c31bbac64b197da87f21fb1bae028524df10333f6f0`.
+
+If the patient then revokes that grant at `2026-09-21T22:07:05.220Z` (four minutes into the fifteen), the revocation anchors as:
+
+```
+{"v":1,"type":"emergency","event":"REVOKED","emergencyAccessId":"66f2a1b3c4d5e6f708192b77","doctorId":"66f2a1b3c4d5e6f708192a02","patientId":"66f2a1b3c4d5e6f708192a01","documentId":"66f2a1b3c4d5e6f708192a10","documentHash":"4cbcc0d60e005ca14a7ccd6e705bac955644327663c196cadcf1954cd851fd9e","grantedAt":"2026-09-21T22:03:41.000Z","revokedBy":"66f2a1b3c4d5e6f708192a01","revokedAt":"2026-09-21T22:07:05.220Z"}
+```
+digest `a667a8b1f962a04b0c6ce1ccada4d8262bee7f55b963cd6b3f1df4cdf7b9eec8`, record key `emergency:66f2a1b3c4d5e6f708192b77:REVOKED`, on-chain key `0x2c2cbf59063d57fb51f9a7f76eeff6964373bfe7c1c673dc879000e4f7e46808`. The grant and its revocation are two independent, write-once anchors: reading both tells you the session existed *and* that the patient ended it early, and neither can be altered afterwards.
 
 These values are produced by the server code and reproduced by the shell commands below; the project's verification script asserts they match on every run.
 
@@ -195,7 +212,7 @@ Guarantees, plainly:
 - **The request never blocks on the chain** and never fails because of it.
 - **At-least-once anchoring.** Every row is retried until it is on-chain or an admin is told. The contract is write-once per key, so a retry after a partially recorded success cannot create a second anchor; the worker recognises "already anchored", checks the digest matches, and recovers the original transaction from the contract's event log.
 - **Restart-safe.** All worker state is on the row; a new process resumes exactly where the old one stopped.
-- **Self-healing.** At every boot the server re-derives, from the consent and emergency records themselves, which anchors *should* exist (`REQUESTED` always; `APPROVED`/`REJECTED`/`REVOKED` when the matching timestamp is set; `GRANTED` for every grant) and enqueues any that have no row. This closes the one window the queue cannot cover on its own — a crash between writing the audit row and inserting the anchor row — so the queue is a work list, not the only source of truth. The sweep is idempotent and only ever creates rows for events that have actually happened.
+- **Self-healing.** At every boot the server re-derives, from the consent and emergency records themselves, which anchors *should* exist (consent: `REQUESTED` always, `APPROVED`/`REJECTED`/`REVOKED` when the matching timestamp is set; emergency: `GRANTED` always, `REVOKED` when `revokedAt` is set) and enqueues any that have no row. This closes the one window the queue cannot cover on its own — a crash between writing the audit row and inserting the anchor row — so the queue is a work list, not the only source of truth. The sweep is idempotent and only ever creates rows for events that have actually happened.
 - **Nothing is dropped silently.** The only terminal failure state is a visible `FAILED` row with an audit entry.
 
 Operational notes: the boot sweep scans consents, grants and anchor keys with narrow projections — negligible up to ~10⁵ records; `ANCHOR_RECONCILE_WINDOW_DAYS` bounds it to recent records for larger deployments (any window longer than the longest possible downtime is sufficient, since a lost enqueue is always for a record written at the moment of the crash). Run one server process per wallet: transactions are serialized in-process to keep the nonce consistent.
@@ -207,7 +224,7 @@ Operational notes: the boot sweep scans consents, grants and anchor keys with na
 - Anchoring proves **integrity and existence-by-time**, not authorization. That a consent was approved at 09:42 is attested; whether the approver was entitled to approve is the access-control layer's job (and the audit log's).
 - The block timestamp is the local Hardhat node's clock in development; on a public chain it would be consensus time.
 - The registry contract is not upgradeable and stores only what §7 says. Changing the preimage format bumps `v` so old anchors remain verifiable under the format they were made with.
-- Only these five events are anchored. Document uploads are anchored separately (`DocumentRegistry`, see ENCRYPTION.md §5). Lab links, logins, views and downloads are audited off-chain only.
+- Only these six events are anchored: the four consent transitions, an emergency grant and an emergency revocation. Document uploads are anchored separately (`DocumentRegistry`, see ENCRYPTION.md §5). Emergency **expiry** is audited but not anchored — it is derivable from `expiresAt`, which the `GRANTED` preimage already fixes. Lab links, logins, views and downloads are audited off-chain only.
 
 ---
 

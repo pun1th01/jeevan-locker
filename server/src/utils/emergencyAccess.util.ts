@@ -5,6 +5,24 @@ import { createAuditLog } from './audit.util';
 export const EMERGENCY_ACCESS_DURATION_MINUTES = 15;
 export const EMERGENCY_ACCESS_DURATION_MS = EMERGENCY_ACCESS_DURATION_MINUTES * 60 * 1000;
 
+export const DEFAULT_MAX_ACTIVE_EMERGENCY_GRANTS = 5;
+export const DEFAULT_REGRANT_WINDOW_HOURS = 24;
+
+const readPositiveNumber = (name: string, fallback: number) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
+/** How many live grants one doctor may hold at once, across all patients (EMERGENCY_MAX_ACTIVE_GRANTS). */
+export const maxActiveEmergencyGrants = () => readPositiveNumber('EMERGENCY_MAX_ACTIVE_GRANTS', DEFAULT_MAX_ACTIVE_EMERGENCY_GRANTS);
+
+/** How long after a revocation a new grant on the same doctor+document counts as a return (EMERGENCY_REGRANT_WINDOW_HOURS). */
+export const regrantWindowMs = () => readPositiveNumber('EMERGENCY_REGRANT_WINDOW_HOURS', DEFAULT_REGRANT_WINDOW_HOURS) * 60 * 60 * 1000;
+
+/** Live grants held by one doctor right now. Call after a lazy sweep so lapsed rows do not count. */
+export const countActiveEmergencyAccesses = (doctorId: string | Types.ObjectId) =>
+  EmergencyAccess.countDocuments({ doctorId, status: 'ACTIVE', expiresAt: { $gt: new Date() } });
+
 /** Audit rows written by background expiry have no request context, so they carry this marker instead of an IP. */
 export const SYSTEM_IP_ADDRESS = 'system';
 

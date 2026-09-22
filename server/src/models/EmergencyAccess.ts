@@ -1,7 +1,12 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import { anchorReferenceSchema, type AnchorReference } from './ConsentGrant';
 
-export const EMERGENCY_ACCESS_STATUSES = ['ACTIVE', 'EXPIRED'] as const;
+/**
+ * ACTIVE  -> EXPIRED  (the 15-minute window lapsed; scheduled job or the lazy path, exactly once)
+ * ACTIVE  -> REVOKED  (the patient ended the session early)
+ * Both transitions are terminal and guarded by an atomic status-conditioned update.
+ */
+export const EMERGENCY_ACCESS_STATUSES = ['ACTIVE', 'EXPIRED', 'REVOKED'] as const;
 
 export type EmergencyAccessStatus = (typeof EMERGENCY_ACCESS_STATUSES)[number];
 
@@ -14,8 +19,19 @@ export interface IEmergencyAccess extends Document {
   status: EmergencyAccessStatus;
   createdAt: Date;
   expiresAt: Date;
-  /** Denormalized on-chain proof of the grant; the ChainAnchor collection is the full ledger. */
-  anchors?: { granted?: AnchorReference };
+  /** Set once when the patient revokes; never cleared. */
+  revokedAt?: Date;
+  revokedBy?: Types.ObjectId;
+  /**
+   * True when this grant was started while a revocation of the SAME doctor on the SAME document was
+   * still recent (EMERGENCY_REGRANT_WINDOW_HOURS). Off-chain by design: it is derivable from the
+   * anchored REVOKED and GRANTED events, and the GRANTED preimage must stay byte-identical.
+   */
+  afterRevocation?: boolean;
+  /** The revoked grant this one followed, when afterRevocation is true. */
+  followsRevokedGrantId?: Types.ObjectId;
+  /** Denormalized on-chain proofs; the ChainAnchor collection is the full ledger. */
+  anchors?: { granted?: AnchorReference; revoked?: AnchorReference };
 }
 
 const emergencyAccessSchema = new Schema<IEmergencyAccess>(
@@ -56,8 +72,15 @@ const emergencyAccessSchema = new Schema<IEmergencyAccess>(
       required: true,
       index: true,
     },
+    revokedAt: { type: Date, default: undefined },
+    revokedBy: { type: Schema.Types.ObjectId, ref: 'User', default: undefined },
+    afterRevocation: { type: Boolean, default: undefined },
+    followsRevokedGrantId: { type: Schema.Types.ObjectId, ref: 'EmergencyAccess', default: undefined },
     anchors: {
-      type: new Schema({ granted: { type: anchorReferenceSchema, default: undefined } }, { _id: false }),
+      type: new Schema(
+        { granted: { type: anchorReferenceSchema, default: undefined }, revoked: { type: anchorReferenceSchema, default: undefined } },
+        { _id: false }
+      ),
       default: undefined,
     },
   },
@@ -68,5 +91,8 @@ const emergencyAccessSchema = new Schema<IEmergencyAccess>(
 );
 
 emergencyAccessSchema.index({ doctorId: 1, documentId: 1, status: 1, expiresAt: 1 });
+// The patient's list, and the scheduled expiry sweep over every lapsed ACTIVE grant.
+emergencyAccessSchema.index({ patientId: 1, status: 1, createdAt: -1 });
+emergencyAccessSchema.index({ status: 1, expiresAt: 1 });
 
 export const EmergencyAccess = mongoose.model<IEmergencyAccess>('EmergencyAccess', emergencyAccessSchema);

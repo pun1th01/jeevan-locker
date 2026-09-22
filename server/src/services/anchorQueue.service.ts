@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { ChainAnchor, type ConsentAnchorEvent, type IChainAnchor } from '../models/ChainAnchor';
+import { ChainAnchor, type ConsentAnchorEvent, type EmergencyAnchorEvent, type IChainAnchor } from '../models/ChainAnchor';
 import { ConsentGrant, type IConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess, type IEmergencyAccess } from '../models/EmergencyAccess';
 import { MedicalDocument } from '../models/MedicalDocument';
@@ -9,6 +9,8 @@ import {
   consentEventActor,
   consentEventsReached,
   consentRecordKey,
+  emergencyEventActor,
+  emergencyEventsReached,
   emergencyRecordKey,
   sha256Hex,
 } from './anchorPreimage.service';
@@ -77,15 +79,26 @@ export const enqueueConsentAnchor = async (
   return inserted;
 };
 
-export const enqueueEmergencyAnchor = async (grant: IEmergencyAccess, documentHash: string | null, source: EnqueueSource = 'controller'): Promise<boolean> => {
+export const enqueueEmergencyAnchor = async (
+  grant: IEmergencyAccess,
+  event: EmergencyAnchorEvent,
+  documentHash: string | null,
+  source: EnqueueSource = 'controller'
+): Promise<boolean> => {
+  const preimage = buildEmergencyPreimage(grant, event, documentHash);
+
+  if (!preimage) {
+    return false;
+  }
+
   const inserted = await insertIfMissing({
-    key: emergencyRecordKey(grant._id.toString(), 'GRANTED'),
+    key: emergencyRecordKey(grant._id.toString(), event),
     recordType: 'emergency',
     recordId: grant._id,
-    event: 'GRANTED',
-    actorUserId: grant.doctorId,
+    event,
+    actorUserId: emergencyEventActor(grant, event),
     documentId: grant.documentId,
-    preimage: buildEmergencyPreimage(grant, 'GRANTED', documentHash),
+    preimage,
     source,
   });
 
@@ -118,7 +131,7 @@ export const reconcileMissingAnchors = async (log: (message: string) => void = c
 
   const [consents, grants, existingKeys] = await Promise.all([
     ConsentGrant.find(consentFilter).select('patientId doctorId documentId purpose requestedAt approvedAt rejectedAt revokedAt'),
-    EmergencyAccess.find(grantFilter).select('doctorId patientId documentId reason createdAt expiresAt'),
+    EmergencyAccess.find(grantFilter).select('doctorId patientId documentId reason createdAt expiresAt revokedAt revokedBy'),
     ChainAnchor.find({}).select('key').lean(),
   ]);
   const known = new Set(existingKeys.map((row) => row.key));
@@ -140,11 +153,17 @@ export const reconcileMissingAnchors = async (log: (message: string) => void = c
   }
 
   for (const grant of grants) {
-    if (known.has(emergencyRecordKey(grant._id.toString(), 'GRANTED'))) continue;
+    const missing = emergencyEventsReached(grant).filter((event) => !known.has(emergencyRecordKey(grant._id.toString(), event)));
 
-    if (await enqueueEmergencyAnchor(grant, await documentHashFor(grant.documentId), 'reconciliation')) {
-      enqueued += 1;
-      log(`[anchors] reconciliation enqueued ${emergencyRecordKey(grant._id.toString(), 'GRANTED')}`);
+    if (missing.length === 0) continue;
+
+    const documentHash = await documentHashFor(grant.documentId);
+
+    for (const event of missing) {
+      if (await enqueueEmergencyAnchor(grant, event, documentHash, 'reconciliation')) {
+        enqueued += 1;
+        log(`[anchors] reconciliation enqueued ${emergencyRecordKey(grant._id.toString(), event)}`);
+      }
     }
   }
 

@@ -25,7 +25,7 @@ export const APP_EVENT_NAMES = [
   'consent.rejected',
   'consent.revoked',
   'emergency.granted',
-  'emergency.revoked',      // typed only — never emitted in Phase 0 (no revoke feature exists)
+  'emergency.revoked',      // emitted since Phase 1 task 7 (patient revocation)
   'document.shared',
   'lab.link.requested',
   'lab.link.approved',
@@ -61,8 +61,8 @@ export interface AppEventMap {
   'consent.approved':    AppEventBase & { documentId: string; consentId: string; documentTitle: string };
   'consent.rejected':    AppEventBase & { documentId: string; consentId: string; documentTitle: string };
   'consent.revoked':     AppEventBase & { documentId: string; consentId: string; documentTitle: string };
-  'emergency.granted':   AppEventBase & { documentId: string; emergencyAccessId: string; documentTitle: string; reason: string; expiresAt: string };
-  'emergency.revoked':   AppEventBase & { documentId: string; emergencyAccessId: string; documentTitle: string };   // typed, not emitted
+  'emergency.granted':   AppEventBase & { documentId: string; emergencyAccessId: string; documentTitle: string; reason: string; expiresAt: string; afterRevocation: boolean };
+  'emergency.revoked':   AppEventBase & { documentId: string; emergencyAccessId: string; documentTitle: string };
   'document.shared':     AppEventBase & { documentId: string; documentTitle: string };
   'lab.link.requested':  AppEventBase & { documentId: null; labLinkId: string; labName: string; organisation?: string };
   'lab.link.approved':   AppEventBase & { documentId: null; labLinkId: string; patientName: string };
@@ -87,13 +87,13 @@ Notes:
 | `consent.rejected` | the doctor | the patient | same | after `CONSENT_REJECTED` audit |
 | `consent.revoked` | the doctor | the patient | same | after `CONSENT_REVOKED` audit |
 | `emergency.granted` | the patient | the doctor | `emergencyAccess.controller.ts` → `grantEmergencyAccess` | **only on a new grant (`201`)**. The "Emergency access is already active" `200` path does **not** emit |
-| `emergency.revoked` | — | — | — | never (typed only) |
+| `emergency.revoked` | **the doctor** losing access | the patient | `emergencyAccess.controller.ts` → `revokeEmergencyAccess` | after the `EMERGENCY_ACCESS_REVOKED` audit row, only when the `ACTIVE → REVOKED` transition actually happened (the `409` path does not emit) |
 | `document.shared` | the doctor | the patient | `document.controller.ts` → `shareDocumentWithDoctor` | **only when the doctor was actually added**. The "Doctor already has access" path does **not** emit |
 | `lab.link.requested` | the patient | the lab | `labLink.controller.ts` → `requestLabLink` | after `LAB_LINK_REQUESTED` audit, on the `201` path |
 | `lab.link.approved` | the lab | the patient | `labLink.controller.ts` → `transitionLabLink` (`ACTIVE` branch) | after `LAB_LINKED` audit. Rejection and revocation are **audit-only**, no event |
 | `lab.report.uploaded` | the patient | the lab | `labReport.controller.ts` → `uploadLabReport` | after `LAB_REPORT_UPLOADED` audit — i.e. after the file is on disk, the row exists and the hash is on-chain |
 
-Not emitted anywhere (by design in Phase 0): break-glass **expiry** (`EMERGENCY_ACCESS_EXPIRED` is audit-only, written lazily), doctor verification, lab creation, patient lookups, integrity checks, document views/downloads, lab link rejection/revocation.
+Not emitted anywhere (by design): break-glass **expiry** (`EMERGENCY_ACCESS_EXPIRED` is audit-only — the grant simply ran its stated course, and the expiry time was already known to the patient from the grant notification), doctor verification, lab creation, patient lookups, integrity checks, document views/downloads, lab link rejection/revocation.
 
 ---
 
@@ -107,7 +107,8 @@ Not emitted anywhere (by design in Phase 0): break-glass **expiry** (`EMERGENCY_
 | `consent.approved` | `${patientName} approved your access to "${title}"` |
 | `consent.rejected` | `${patientName} declined your access request for "${title}"` |
 | `consent.revoked` | `${patientName} revoked your access to "${title}"` |
-| `emergency.granted` | `${doctorName} used emergency access on "${title}"` |
+| `emergency.granted` | `${doctorName} used emergency access on "${title}"` — **or**, when `afterRevocation` is true, `${doctorName} used emergency access on "${title}" again after you revoked it`. Render both variants. |
+| `emergency.revoked` | `${patientName} revoked your emergency access to "${title}"` |
 | `document.shared` | `${patientName} shared "${title}" with you` |
 | `lab.link.requested` | `${labName} requests permission to upload reports to your vault` |
 | `lab.link.approved` | `${patientName} authorised your lab to upload reports` |
@@ -166,11 +167,12 @@ Rules for a new emit site: emit **after** the DB write and the audit row; never 
   | Event | key |
   |---|---|
   | `consent.*` | `${name}:${consentId}` |
-  | `emergency.granted` | `${name}:${emergencyAccessId}` |
+  | `emergency.granted` / `emergency.revoked` | `${name}:${emergencyAccessId}` |
   | `document.shared` | `${name}:${documentId}:${recipientUserId}` |
   | `lab.link.*` | `${name}:${labLinkId}` |
   | `lab.report.uploaded` | `${name}:${documentId}` |
 - **Don't block.** The listener runs off the request path already, but keep it to one insert; anything heavier belongs in a job.
 - **Recipient is authoritative.** Render to `recipientUserId` only; never fan out to other users from a listener.
-- **Roles of the recipient by event:** patient — `consent.requested`, `emergency.granted`, `lab.link.requested`, `lab.report.uploaded`; doctor — `consent.approved|rejected|revoked`, `document.shared`; lab — `lab.link.approved`.
+- **`emergency.granted` has two message variants.** `afterRevocation: true` means this grant re-opened access the patient revoked within the last `EMERGENCY_REGRANT_WINDOW_HOURS` (default 24); the message says so, and the flag is on the payload so a listener can style it as an escalation rather than parse text.
+- **Roles of the recipient by event:** patient — `consent.requested`, `emergency.granted`, `lab.link.requested`, `lab.report.uploaded`; doctor — `consent.approved|rejected|revoked`, `document.shared`, `emergency.revoked`; lab — `lab.link.approved`.
 - The `message` is safe to render as text. It is not HTML.

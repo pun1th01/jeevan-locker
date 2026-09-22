@@ -1,6 +1,13 @@
 import type { RequestHandler } from 'express';
 import { Types } from 'mongoose';
-import { CHAIN_ANCHOR_STATUSES, ChainAnchor, type ChainAnchorStatus, type ConsentAnchorEvent, type IChainAnchor } from '../models/ChainAnchor';
+import {
+  CHAIN_ANCHOR_STATUSES,
+  ChainAnchor,
+  type ChainAnchorStatus,
+  type ConsentAnchorEvent,
+  type EmergencyAnchorEvent,
+  type IChainAnchor,
+} from '../models/ChainAnchor';
 import { ConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess } from '../models/EmergencyAccess';
 import { MedicalDocument } from '../models/MedicalDocument';
@@ -170,7 +177,7 @@ const recomputePreimage = async (anchor: IChainAnchor): Promise<string | null> =
   }
 
   const grant = await EmergencyAccess.findById(anchor.recordId);
-  return grant ? buildEmergencyPreimage(grant, 'GRANTED', documentHash) : null;
+  return grant ? buildEmergencyPreimage(grant, anchor.event as EmergencyAnchorEvent, documentHash) : null;
 };
 
 const differingFields = (stored: string, recomputed: string | null): string[] => {

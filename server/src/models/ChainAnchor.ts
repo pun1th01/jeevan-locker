@@ -16,7 +16,7 @@ export type ChainAnchorStatus = (typeof CHAIN_ANCHOR_STATUSES)[number];
 export const CONSENT_ANCHOR_EVENTS = ['REQUESTED', 'APPROVED', 'REJECTED', 'REVOKED'] as const;
 export type ConsentAnchorEvent = (typeof CONSENT_ANCHOR_EVENTS)[number];
 
-export const EMERGENCY_ANCHOR_EVENTS = ['GRANTED'] as const;
+export const EMERGENCY_ANCHOR_EVENTS = ['GRANTED', 'REVOKED'] as const;
 export type EmergencyAnchorEvent = (typeof EMERGENCY_ANCHOR_EVENTS)[number];
 
 export type AnchorRecordType = 'consent' | 'emergency';
