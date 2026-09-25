@@ -7,7 +7,7 @@ import PatientLookupField from '../../components/patients/PatientLookupField';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { getApiErrorMessage } from '../../lib/api';
+import { getApiErrorMessage, getApiErrorStatus } from '../../lib/api';
 import { labService } from '../../services/lab.service';
 import { useAuthStore } from '../../store/useAuthStore';
 import type { LabMedicalDocument } from '../../types/document';
@@ -44,10 +44,23 @@ const initialReportForm: LabReportForm = {
   reportDate: '',
 };
 
-let testValueSequence = 0;
+/**
+ * The same boundary as the patient upload dialog (DocumentUploadModal.tsx:72) and the server: a file of exactly 5 MB is
+ * accepted, one byte more is refused. Checked before sending, so a lab never uploads 5 MB only to be refused.
+ */
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const NOT_AUTHORISED_MESSAGE =
+  'This patient no longer authorises your lab (the link was revoked or rejected). The link list has been refreshed; request a new link to issue reports.';
+
+/** Local midnight of a YYYY-MM-DD date input: never later than now for today's date, whatever the timezone. */
+const toReportDateIso = (value: string) => new Date(`${value}T00:00:00`).toISOString();
+const todayAsDateInput = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 
 const createTestValueRow = (): TestValueRow => ({
-  id: `test-value-${testValueSequence++}`,
+  id: crypto.randomUUID(),
   name: '',
   value: '',
   unit: '',
@@ -111,7 +124,9 @@ export default function LabDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadDashboardData();
+    // Deferred by a tick, so the effect subscribes to server data rather than setting state synchronously.
+    const timeoutId = window.setTimeout(() => void loadDashboardData(), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadDashboardData]);
 
   const activeLinks = useMemo(() => links.filter((link) => link.status === 'ACTIVE'), [links]);
@@ -195,6 +210,11 @@ export default function LabDashboard() {
       return;
     }
 
+    if (reportFile.size > MAX_FILE_SIZE_BYTES) {
+      setUploadError('File size must be 5.0 MB or less.');
+      return;
+    }
+
     if (!form.title.trim()) {
       setUploadError('Enter a report title.');
       return;
@@ -202,12 +222,11 @@ export default function LabDashboard() {
 
     let reportDate: string | undefined;
     if (form.reportDate) {
-      const parsedDate = new Date(form.reportDate);
-      if (Number.isNaN(parsedDate.getTime())) {
+      if (Number.isNaN(new Date(`${form.reportDate}T00:00:00`).getTime())) {
         setUploadError('Enter a valid report date.');
         return;
       }
-      reportDate = parsedDate.toISOString();
+      reportDate = toReportDateIso(form.reportDate);
     }
 
     const testValues = buildTestValues();
@@ -242,7 +261,14 @@ export default function LabDashboard() {
       setFileInputKey((currentKey) => currentKey + 1);
       setSuccessMessage(`${uploadedReport.title} was uploaded for ${selectedActiveLink.patient.name}.`);
     } catch (error) {
-      setUploadError(getApiErrorMessage(error));
+      if (getApiErrorStatus(error) === 403) {
+        // The patient revoked (or never approved) the link since this page loaded: stop offering it as ACTIVE.
+        setUploadError(NOT_AUTHORISED_MESSAGE);
+        setSelectedActiveLinkId('');
+        void loadDashboardData();
+      } else {
+        setUploadError(getApiErrorMessage(error));
+      }
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -406,7 +432,7 @@ export default function LabDashboard() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lab-report-date">Report date</Label>
-                  <Input id="lab-report-date" type="datetime-local" value={form.reportDate} onChange={(event) => updateForm('reportDate', event.target.value)} disabled={!selectedActiveLink || isUploading} />
+                  <Input id="lab-report-date" type="date" max={todayAsDateInput()} value={form.reportDate} onChange={(event) => updateForm('reportDate', event.target.value)} disabled={!selectedActiveLink || isUploading} />
                 </div>
               </div>
 
