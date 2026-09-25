@@ -294,7 +294,7 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700/50">
-                    {document.testValues.map((tv, idx) => {
+                    {document.testValues.map((tv) => {
                       let statusColor = 'bg-slate-800 text-slate-300';
                       if (tv.flag === 'critical') statusColor = 'bg-rose-500/20 text-rose-200';
                       else if (tv.flag === 'high' || tv.flag === 'low') statusColor = 'bg-amber-500/20 text-amber-200';
@@ -308,14 +308,23 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
                         refDisplay = `< ${tv.refHigh}`;
                       }
 
+                      // The limits behind a "Critical" flag, so it is explained next to the normal range.
+                      const criticalLimits = [
+                        tv.criticalLow !== undefined ? `< ${tv.criticalLow}` : null,
+                        tv.criticalHigh !== undefined ? `> ${tv.criticalHigh}` : null,
+                      ].filter(Boolean).join(' or ');
+
                       return (
-                        <tr key={idx}>
+                        <tr key={`${tv.name}|${tv.unit}|${tv.value}`}>
                           <td className="px-4 py-3 font-medium text-slate-200">{tv.name}</td>
                           <td className="px-4 py-3">
                             <span className="font-semibold text-white">{tv.value}</span>
                             <span className="ml-1 text-xs text-slate-400">{tv.unit}</span>
                           </td>
-                          <td className="px-4 py-3 text-slate-400">{refDisplay}</td>
+                          <td className="px-4 py-3 text-slate-400">
+                            {refDisplay}
+                            {criticalLimits ? <span className="block text-xs text-rose-300/80">Critical {criticalLimits}</span> : null}
+                          </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold capitalize ${statusColor}`}>
                               {tv.flag}
