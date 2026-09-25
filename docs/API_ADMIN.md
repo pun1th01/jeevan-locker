@@ -2,7 +2,7 @@
 
 The three admin endpoints plus the doctor-verification gate they control. Written from the implemented server code (Phase 0, commit `1e94707`); every status and message below is the exact value the server sends.
 
-Related: [API_LAB.md](API_LAB.md) — what a lab account can do once it exists.
+Related: [API_LAB.md](API_LAB.md) — what a lab account can do once it exists; [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) — the consent and break-glass routes the verification gate protects.
 
 ---
 

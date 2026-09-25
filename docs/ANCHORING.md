@@ -2,7 +2,7 @@
 
 How consent decisions and emergency ("break-glass") access are made tamper-evident by anchoring them on a blockchain, and how anyone holding a database record can check — with nothing but a shell — that the record still matches what was anchored. Written from the implementation in `server/contracts/AuditAnchorRegistry.sol`, `server/src/services/anchorPreimage.service.ts`, `anchorQueue.service.ts`, `anchorWorker.service.ts` and `server/src/controllers/anchor.controller.ts` (Phase 1, Task 6).
 
-Related: [ENCRYPTION.md](ENCRYPTION.md) (documents at rest — the same "the chain describes the fact, not a mutable view of it" principle), [API_ADMIN.md](API_ADMIN.md).
+Related: [ENCRYPTION.md](ENCRYPTION.md) (documents at rest — the same "the chain describes the fact, not a mutable view of it" principle), [API_ADMIN.md](API_ADMIN.md), [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) (the consent and break-glass calls whose events are anchored).
 
 ---
 

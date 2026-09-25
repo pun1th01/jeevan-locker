@@ -2,7 +2,7 @@
 
 Everything a lab-facing client needs. Written from the implemented server code (Phase 0, commit `1e94707`); every status code and message string below is the exact value the server sends. If the code and this file ever disagree, the code wins — open an issue.
 
-Related: [API_ADMIN.md](API_ADMIN.md) covers how lab accounts are provisioned and how doctors get verified.
+Related: [API_ADMIN.md](API_ADMIN.md) covers how lab accounts are provisioned and how doctors get verified; [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) covers how doctors gain access to a patient's documents (consent and break-glass).
 
 ---
 

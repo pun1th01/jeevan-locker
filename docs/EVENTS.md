@@ -2,7 +2,7 @@
 
 The in-process event contract that the Notification feature (model, endpoints, bell) is built on. Written from the implemented code in `server/src/events/appEvents.ts` and the emit sites listed below (Phase 0, Task 3). If the code and this file disagree, the code wins — open an issue.
 
-Related: [API_LAB.md](API_LAB.md), [API_ADMIN.md](API_ADMIN.md).
+Related: [API_LAB.md](API_LAB.md), [API_ADMIN.md](API_ADMIN.md), [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) (the calls that emit `consent.*` and `emergency.*`).
 
 ---
 
