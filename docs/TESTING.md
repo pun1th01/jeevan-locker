@@ -81,7 +81,7 @@ These are not claims about JeevanLocker; they are what makes every other result 
 
 ## 3. Claims and the tests that back them
 
-Five suites: access control, encryption, anchoring, break-glass and hardening. Every claim is one sentence about the system; the proof column says what the test actually does.
+Six suites: access control, encryption, anchoring, break-glass, hardening and the demo seed. Every claim is one sentence about the system; the proof column says what the test actually does.
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
@@ -163,6 +163,18 @@ Specification: [API_LAB.md](API_LAB.md) §3 (upload checks) and §6 (rate limits
 | C44 | Patient lookups are limited to thirty per account per 15 minutes, counted before the verification gate, so an unverified account cannot probe for free. A lab's link requests are limited the same way. | An unverified doctor gets thirty `403`s (verification message) and then `429`; a verified doctor on the same address is unaffected. A lab gets thirty `404` probes and then `429`; another lab is unaffected. | `limits.test.ts` → *C44* |
 | C45 | `TRUST_PROXY` decides which address is audited and rate-limited. Unset, `X-Forwarded-For` is ignored; with a hop count, only the proxy-supplied address is believed; "trust everyone" is refused at startup. | The real config parses `""`, `false`, `0` → off; `1`, `2` → hop counts; `loopback` and a CIDR list pass through; `true` in any case fails to load. Unset: a read with `X-Forwarded-For` is audited with the socket address. One hop: the audited address is the one the proxy appended, even when the client prepended its own, and the login limit is kept per real client. `loopback`: a local proxy's header is believed. A server *started* with `TRUST_PROXY=1` applies it (`trustProxyBoot.test.ts` imports the app only after setting it). | `limits.test.ts` → *C45*; `trustProxyBoot.test.ts` |
 
+### 3.6 The demo seed — suite 6 (`test/seed/`, 9 tests)
+
+The viva runs on the development seed, and until this suite nothing executed it — which is how reports without a lab link, documents missing from the chain and "every date is today" all reached main. These files run the **real** seed (`seedDemoUsers`) on the harness's real chain and their own database. The seed only runs in development and `config/env.ts` reads `NODE_ENV` once, so each file sets `NODE_ENV=development` before its first import from `src/`. Expected dates are written out by hand, not read back from the seed's own data.
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C46 | Every seeded document is stored encrypted, registered on-chain with its plaintext hash, and verifies. | All ten documents are `JLE1` files on disk with no plaintext left in the uploads directory. Each has `blockchainDocumentId` and `blockchainTxHash`, the registry holds its plaintext `documentHash` (read directly from the contract), and `/integrity` answers `200 verified: true` for every one. | `seed.test.ts` → *C46* |
+| C47 | The demo lab is authorised by every patient it issued a report to. | Each patient with a seeded lab report has exactly one link to the issuing lab. It is `ACTIVE`, with the hand-written request and approval times, approved before both the report's `createdAt` and its `reportDate`, and has exactly one `LAB_LINK_REQUESTED` row (by the lab) and one `LAB_LINKED` row (by the patient). | `seed.test.ts` → *C47* |
+| C48 | Seeded records carry their seeded dates. | Every document's `createdAt` equals its hand-written seeded date (2–25 May 2026), after the first seed and after a re-seed of existing rows. | `seed.test.ts` → *C48*, *C49* |
+| C49 | Re-seeding is idempotent, including against a chain that already holds the registrations. | A second seed changes no count and no transaction hash (users, documents, links, audit rows). Rows whose chain fields were lost are refilled with the **original** transactions from the event log, not re-sent. A fresh database against the same chain (a dev API restart) registers the new ids with no conflict and every document verifies. | `seed.test.ts` → *C49* |
+| C50 | The seed never breaks boot and never overwrites the chain. | With the RPC unreachable the seed completes, all ten documents stay unregistered, a warning says so, and the next seed with the chain up registers them all. An id already registered with a different hash is reported by name (`SEED CONFLICT`), left unregistered while the other nine register, and the chain still holds the original hash. | `seedFailures.test.ts` |
+
 ---
 
 ## 4. Evidence the tests can fail
@@ -216,6 +228,13 @@ A test that has never been seen failing proves little. Each change below was mad
 | Put the lookup limiter after the verification gate | code | C44: the unverified doctor was refused forever but never throttled |
 | Key the lookup limiter by address instead of account | code | C44: the verified doctor on the same address was throttled |
 | Accept `TRUST_PROXY=true` | code | C45: all three spellings |
+| The seed skips on-chain registration | code | C46, C49 and C50: 6 tests |
+| The seed creates no lab links | code | C47, and the fresh-database case of C49 |
+| Seeded dates set by an update Mongoose drops (the old code) | code | C48, both date checks |
+| The seed registers without reading the chain first | code | C49 (the re-seeds revert on the write-once registry) and C50 (the conflict) |
+| Missing chain fields re-sent instead of recovered from the event log | code | C49, the lost-fields case |
+| An unreachable chain crashes the seed | code | C50, the outage case |
+| A conflicting registration is overwritten (attempted) | code | C50, the conflict case |
 | `app.ts` ignores `TRUST_PROXY` | code | C45, `trustProxyBoot.test.ts` only. The other trust-proxy tests set the value themselves, which is why that file exists. |
 | Swap two keys of the GRANTED preimage | code | C26 (the test's own §2 preimage no longer matches); `verify:anchors` too |
 | Verdict ignores the chain (`verified = matchesRecord`) | code | C28: the not-yet-anchored row and the unreachable-node case |
@@ -262,7 +281,7 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 12 files, 937 tests | **53–61 s** (56–65 s wall clock) |
+| `npm test` — 14 files, 946 tests | **53–104 s** — the same suite has measured anywhere in this range on the development machine depending on its load; 53–61 s on an idle machine |
 | Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
@@ -283,3 +302,4 @@ Time spent running each file's tests (excluding its app import):
 | `hardening/uploads.test.ts` | 32 | 1.6 s |
 | `breakglass/grantInsert.test.ts` | 7 | 1.2 s |
 | `harness.test.ts` | 8 | 0.5 s |
+| `seed/seed.test.ts` + `seed/seedFailures.test.ts` (run the real seed several times) | 9 | ≈ 30 s |
