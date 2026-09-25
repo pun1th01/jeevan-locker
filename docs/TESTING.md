@@ -79,7 +79,7 @@ These are not claims about JeevanLocker; they are what makes every other result 
 
 ## 3. Claims and the tests that back them
 
-Suites land in this order: access control (suite 1, below), then encryption, anchoring, break-glass and hardening. Every claim is one sentence about the system; the proof column says what the test actually does.
+Five suites: access control, encryption, anchoring, break-glass and hardening. Every claim is one sentence about the system; the proof column says what the test actually does.
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
@@ -97,7 +97,7 @@ Suites land in this order: access control (suite 1, below), then encryption, anc
 | C8 | Doctor verification gates *initiating* access, not access already given: an unverified doctor keeps documents shared, consented or granted to them. | A doctor shared a document while unverified, and a doctor who obtained consent and a grant and was then unverified, both read exactly those documents. | `documents.test.ts` → *read matrix* |
 | C9 | A role the system does not know receives nothing, refused with the same clean 403 as any other denial; the role switch has no default that grants, and adding a role without a branch fails compilation. | A user row with role `superadmin` (inserted past the schema enum) gets exactly `403 {message}` on every read endpoint for every document, and a 403 on the list. It never gets a 500. The compile-time half was checked by adding a fifth role to `USER_ROLES`: `tsc` failed at both role switches. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
 | C10 | Every served read is audited exactly once, and a refused read leaves no access record. | Every matrix cell counts that actor's `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` rows for that document before and after: +1 when served, +0 when refused. | `documents.test.ts` → *read matrix* |
-| C11 | A user's document list contains exactly the documents they are allowed to open. | For each actor, `GET /my-documents` restricted to this world equals the actor's row of the specification. This is separate from C5 because the list is built by a different query from the one that decides a single read. A list that forgot live grants fails here while every single-document read still passes (see §3.2). | `documents.test.ts` → *list mirrors decision* |
+| C11 | A user's document list contains exactly the documents they are allowed to open. | For each actor, `GET /my-documents` restricted to this world equals the actor's row of the specification. This is separate from C5 because the list is built by a different query from the one that decides a single read. A list that forgot live grants fails here while every single-document read still passes (see §4). | `documents.test.ts` → *list mirrors decision* |
 | C12 | Only the owning patient can share a document, only with a doctor, and an upload cannot be assigned to anyone but its uploader. | Another patient and the issuing lab are refused. Sharing with an admin, a lab, a patient or an unknown-role user is refused and leaves `sharedWithDoctors` untouched. An upload carrying forged `uploadedBy`, `sharedWithDoctors` and `uploadedByLab` fields is stored as the caller's own and unshared, and the injected parties are refused. | `documents.test.ts` → *document writes* |
 | C13 | An unverified doctor cannot look up a patient, request consent or break glass, and a refused attempt writes nothing. Verification takes effect on the same token. | Each refusal is `403 {verification message}`, and no `PATIENT_LOOKUP` audit row, consent row or grant row is created. After an admin verifies the account, the same token succeeds at all three. | `workflows.test.ts` → *verification gate* |
 | C14 | No HTTP request can create an admin. | Self-registration with role `admin`, `lab` or `["admin"]` is refused and creates nobody. A self-registered doctor who sends `verified: true` is stored unverified. `POST /admin/users` refuses `admin`, `Admin`, `" admin "`, `doctor`, `["admin"]` and `{ $ne: "lab" }` and creates nobody; with no role it creates a lab. The verify endpoint refuses patients, labs and admins without changing them. The admin count is checked unchanged after every attempt. | `workflows.test.ts` → *admin creation* |
@@ -105,7 +105,24 @@ Suites land in this order: access control (suite 1, below), then encryption, anc
 | C16 | A consent, grant or lab link can be decided only by the patient it names and seen only by the parties to it; a doctor cannot pair one patient with another patient's document. | Another patient's approve, reject or revoke is refused and the record keeps its state. Another patient's revoke of a live grant is refused and the doctor still reads. Third parties' lists never contain the record. A mismatched patient/document pair is refused and creates nothing. | `workflows.test.ts` → *consent*, *break-glass*, *lab links* |
 | C17 | A lab can upload into a patient's vault only while that patient's link is `ACTIVE`, and a refused upload stores nothing. | Uploads while pending, rejected, revoked or never linked are refused and leave no document row. The same lab succeeds while `ACTIVE`, and a report addressed to a non-patient id is 404. | `workflows.test.ts` → *lab links* |
 
-### 3.2 Evidence the tests can fail
+### 3.2 Encryption at rest — suite 2 (`test/encryption/vault.test.ts`, 28 tests)
+
+Specification: [ENCRYPTION.md](ENCRYPTION.md). Files are uploaded over HTTP, tampered with byte by byte on disk, and read back through the real endpoints.
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C18 | A document is served back exactly as it was uploaded. | PDF, PNG and JPEG files, plus a 4.5 MB PDF that streams in many chunks: `/view` and `/download` return byte-identical content with the declared `Content-Type` and `Content-Length` equal to the plaintext size. | *C18 round trip* |
+| C19 | The disk holds only authenticated ciphertext, never the plaintext, and every file has its own key. | After an upload, the only new file in the uploads directory is the `.enc`, so the plaintext temp is gone. The file starts with `JLE1`, is exactly plaintext + 32 bytes, and contains neither the file's magic bytes nor a marker planted in the plaintext. The row carries a 60-byte wrapped key and `encryptedAtRest: true`. The same plaintext uploaded twice shares no IV, no ciphertext and no wrapped key, but the same attested hash. | *C19 at rest* |
+| C20 | The chain attests the plaintext: encryption does not change what is verified. | `documentHash`, the registry's record for the document (read directly from the contract with ethers, not through the server) and `/integrity`'s `currentHash` and `blockchainHash` are all equal to SHA-256 of the uploaded bytes. | *C20* |
+| C21 | A modified file is never served. Every read path answers `409` before a single byte of content leaves, and each failed attempt is audited exactly once with its reason. | Eight modifications on disk: a flipped ciphertext bit, a flipped tag bit, a flipped IV bit, truncation by one byte, one byte appended, truncation below the container size, a corrupted magic, and the file replaced by its own plaintext. On `/view`, `/download` and `/integrity` each gets `409 Document file failed integrity check` as JSON, with no `Content-Disposition` and no plaintext in the body. Each request adds exactly one `DOCUMENT_INTEGRITY_FAILED` row, carrying the reason (`TAMPERED` or `BAD_CONTAINER` as specified), the operation, the document, the stored file name and the key label, and no success row is written. An untouched file writes no failure row on any path. | *C21* |
+| C22 | Each file is cryptographically bound to its own database row: files, keys and whole file-plus-key pairs cannot be moved between documents. | Swapping two documents' files on disk makes both fail; so does swapping their wrapped keys. Copying A's ciphertext **and** A's wrapped key onto B, a pair that decrypts perfectly under A's id, fails on B and leaves A working. Restoring the originals makes both serve again (a control that the fixture itself was sound). | *C22* |
+| C23 | The master key is required, must be exactly 32 bytes, and is the only way in: the files and the database without it decrypt nothing. | The same vault code, loaded fresh under a different 32-byte master key with the same label, fails to authenticate a real file (`TAMPERED`), while the right key yields the plaintext hash. The config refuses to load with the key missing, 16 bytes or 33 bytes. A row wrapped under a key label the server doesn't hold gets `503 Document encryption key is unavailable` on all three read paths, audited as `KEY_UNAVAILABLE`. | *C23* |
+| C24 | Documents stored before encryption existed keep working, and the chain still catches changes to them. | A legacy row (plaintext file, no `encryption`, hash really registered on the chain) is served byte for byte, reported `encryptedAtRest: false`, and verifies. After one bit of its file is changed, `/integrity` reports `verified: false` with the new and the registered hash. | *C24* |
+| C25 | Plaintext never outlives the upload request, whatever fails. | A validation failure (no title) leaves no file and no row. A real chain outage *after* encryption (nothing listening on the RPC port) leaves no plaintext, no ciphertext and no row; with the chain back, the same upload succeeds. | *C25* |
+
+---
+
+## 4. Evidence the tests can fail
 
 A test that has never been seen failing proves little. Each change below was made on purpose, the suite was run, and the change was reverted. *Table* mutations edit a test's specification; *code* mutations edit the server.
 
@@ -120,16 +137,26 @@ A test that has never been seen failing proves little. Each change below was mad
 | `my-documents` filter forgets live break-glass grants | code | C11 for the two actors reading through a grant, while all 504 C5 cells still passed |
 | Restore the old catch-all that threw on an unknown role | code | C9: 28 read cells and the list refusal (each got a 500) |
 | Add a fifth role to `USER_ROLES` | code | `tsc`, at both role switches (`not assignable to parameter of type 'never'`) |
+| Remove the AAD binding (file and wrapped key) | code | C22, the file-plus-key transplant only. Swapped files and swapped keys still fail without AAD because every file has its own key, so the transplant is the test that proves AAD matters. |
+| Stream without the authenticate-first pass | code | C21: every tamper case (a `200` went out before the failure), and C18, because `Content-Length` became the container size |
+| `/integrity` hashes the file on disk (the ciphertext) instead of the plaintext | code | C20, and every C21 tamper case on `/integrity` |
+| Leave the plaintext upload temp on disk | code | C19 (a second new file) and C25 (a file left after the chain failure) |
+| Skip the `DOCUMENT_INTEGRITY_FAILED` audit row | code | C21, all eight tamper cases |
 | Remove a variable from the pinned test environment | harness | G1, naming the variable and the file that reads it |
-
-### 3.3 Observations (not failures)
-
-- *Resolved:* an unknown role used to be refused by a thrown error: a 500, with a stack trace outside production. Nothing was served, but a thrown error is the wrong way to fail in the access path. The catch-all now denies explicitly (a 403) and keeps the compile-time `never` check. C9 was tightened from "not 2xx" to the exact 403.
-- **Object-level refusals confirm that an id exists.** Another patient acting on a consent, grant or lab link gets 403, while an unknown id gets 404. That is the documented behaviour (API_LAB.md §3 for lab links). It lets a signed-in patient probe whether an ObjectId belongs to *some* record, never what that record contains.
 
 ---
 
-## 4. What is not tested
+## 5. Findings and observations
+
+What the suites turned up beyond pass/fail. None is an access or integrity hole.
+
+- *Resolved:* an unknown role used to be refused by a thrown error: a 500, with a stack trace outside production. Nothing was served, but a thrown error is the wrong way to fail in the access path. The catch-all now denies explicitly (a 403) and keeps the compile-time `never` check. C9 was tightened from "not 2xx" to the exact 403.
+- **Object-level refusals confirm that an id exists.** Another patient acting on a consent, grant or lab link gets 403, while an unknown id gets 404. That is the documented behaviour (API_LAB.md §3 for lab links). It lets a signed-in patient probe whether an ObjectId belongs to *some* record, never what that record contains.
+- **Open: a chain outage during upload is reported as `500 Internal server error`, not `503`.** The cleanup is exactly as documented (C25): no file, no row. But the status is a generic 500, and outside production the body carries the stack trace, including the RPC connection error. The "chain not configured" path already answers `503`; an unreachable chain should arguably do the same. Not fixed in Task 8.
+
+---
+
+## 6. What is not tested
 
 - The React client. The suite is server-side; the UI was verified by hand in the browser for each feature.
 - Timing side channels (e.g. whether the lookup 404 takes measurably longer for a non-patient email). Responses are compared for identical status and body only.
@@ -137,7 +164,7 @@ A test that has never been seen failing proves little. Each change below was mad
 
 ---
 
-## 5. Timings
+## 7. Timings
 
 Measured on the development machine (4 cores, repository on OneDrive), warm:
 
