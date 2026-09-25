@@ -42,7 +42,9 @@ npm test
          own funded chain account               Hardhat account #<worker>
      - import the app, connect, run tests
      - drop the database, delete the temp directory
- └─ teardown: stop mongod, kill the chain's process tree, wait for its port to close
+ └─ teardown: stop mongod, kill the chain's process tree, wait for its port to close,
+              delete the run's temp directory (every file's workspace lives inside it, so even a file
+              that crashed before its own cleanup leaves nothing behind)
 ```
 
 **Why one chain and one mongod.** Measured on the development machine: a Hardhat node takes 3–4 s to answer (27 s on a cold machine), mongod 2 s (10 s cold). Per file, that would dominate the run.
@@ -77,7 +79,51 @@ These are not claims about JeevanLocker; they are what makes every other result 
 
 ## 3. Claims and the tests that back them
 
-*(Filled in suite by suite: access control first, then encryption, anchoring, break-glass, hardening.)*
+Suites land in this order: access control (suite 1, below), then encryption, anchoring, break-glass and hardening. Every claim is one sentence about the system; the proof column says what the test actually does.
+
+**How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
+
+### 3.1 Access control — suite 1 (`test/access/`, 800 tests)
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C1 | Every HTTP endpoint has an explicit, reviewed access rule; an endpoint added without one fails the suite. | Reads the router stack of every routes file mounted on the app (Express keeps each route's path and methods) and requires an exact match with the hand-written access table. It fails on a route without a row, a row without a route, a routes file without a mount prefix, a router mounted that did not come from a routes file, and nested routers the scan cannot see. | `inventory.test.ts` → *route inventory* |
+| C2 | Every endpoint except health, register and login refuses a request that carries no token. | Each of the 32 protected routes, called anonymously: `401 Authentication token is required`. | `inventory.test.ts` → *gate grid* |
+| C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 35 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the three gated routes gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
+| C4 | Identity and role are read from the database on every request. The role inside a token is ignored, and forged, expired, malformed, wrong-secret and deleted-user tokens are all refused. | A patient's token re-signed to claim `admin` still gets 403 on admin routes; an admin's token claiming `patient` still gets 200; a lab's token claiming `doctor` still cannot look up or break glass. Wrong secret, expired, unknown user, missing `userId`, non-JWT and non-Bearer headers each get 401 with their documented message. A valid token stops working the moment its user is deleted. | `inventory.test.ts` → *tokens* |
+| C5 | A document is readable by its owner, by an admin, and by a doctor holding a share, an approved consent or a live break-glass grant — and by nobody else. | A world of 7 documents (patient uploads, lab reports, a second patient's records) and 18 actors covering every relationship. Every actor tries every document on each of the 4 read endpoints (`/:id`, `/view`, `/download`, `/integrity`): 504 cells. An allowed cell must return 200 with the right content: the right id, an `inline` or `attachment` disposition, `verified: true` from the chain. A refused cell must return exactly `403 {message}` and nothing else. Unknown and malformed ids give every role `404 Document not found`. | `documents.test.ts` → *read matrix* |
+| C6 | A lab reads only the reports it issued. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. | `documents.test.ts` → *read matrix* |
+| C7 | Consent and break-glass grant access only while live. Pending, rejected and revoked consents give nothing, and neither do revoked or lapsed grants — including a lapsed grant whose row still says `ACTIVE` because nothing has swept it yet. | One doctor per state, each refused on every read endpoint. | `documents.test.ts` → *read matrix* |
+| C8 | Doctor verification gates *initiating* access, not access already given: an unverified doctor keeps documents shared, consented or granted to them. | A doctor shared a document while unverified, and a doctor who obtained consent and a grant and was then unverified, both read exactly those documents. | `documents.test.ts` → *read matrix* |
+| C9 | A role the system does not know receives nothing: the role switch has no default that grants. | A user row with role `superadmin` (inserted past the schema enum) is served no document, no list and no file on any read endpoint. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
+| C10 | Every served read is audited exactly once, and a refused read leaves no access record. | Every matrix cell counts that actor's `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` rows for that document before and after: +1 when served, +0 when refused. | `documents.test.ts` → *read matrix* |
+| C11 | A user's document list contains exactly the documents they are allowed to open. | For each actor, `GET /my-documents` restricted to this world equals the actor's row of the specification. This is separate from C5 because the list is built by a different query from the one that decides a single read. A list that forgot live grants fails here while every single-document read still passes (see §3.2). | `documents.test.ts` → *list mirrors decision* |
+| C12 | Only the owning patient can share a document, only with a doctor, and an upload cannot be assigned to anyone but its uploader. | Another patient and the issuing lab are refused. Sharing with an admin, a lab, a patient or an unknown-role user is refused and leaves `sharedWithDoctors` untouched. An upload carrying forged `uploadedBy`, `sharedWithDoctors` and `uploadedByLab` fields is stored as the caller's own and unshared, and the injected parties are refused. | `documents.test.ts` → *document writes* |
+| C13 | An unverified doctor cannot look up a patient, request consent or break glass, and a refused attempt writes nothing. Verification takes effect on the same token. | Each refusal is `403 {verification message}`, and no `PATIENT_LOOKUP` audit row, consent row or grant row is created. After an admin verifies the account, the same token succeeds at all three. | `workflows.test.ts` → *verification gate* |
+| C14 | No HTTP request can create an admin. | Self-registration with role `admin`, `lab` or `["admin"]` is refused and creates nobody. A self-registered doctor who sends `verified: true` is stored unverified. `POST /admin/users` refuses `admin`, `Admin`, `" admin "`, `doctor`, `["admin"]` and `{ $ne: "lab" }` and creates nobody; with no role it creates a lab. The verify endpoint refuses patients, labs and admins without changing them. The admin count is checked unchanged after every attempt. | `workflows.test.ts` → *admin creation* |
+| C15 | Patient lookup never reveals whether an email or id belongs to another role. | Probes: an unknown email; a doctor's, an admin's and a lab's email; an unknown id; a doctor's, an admin's and a lab's id; an email prefix. On both lookup endpoints (`GET /patients/lookup`, `POST /lab-links`) every probe gets the same status, body, content type and content length. Positive controls: the patient is found by email, in any case and with surrounding spaces, and by id. | `workflows.test.ts` → *patient lookup* |
+| C16 | A consent, grant or lab link can be decided only by the patient it names and seen only by the parties to it; a doctor cannot pair one patient with another patient's document. | Another patient's approve, reject or revoke is refused and the record keeps its state. Another patient's revoke of a live grant is refused and the doctor still reads. Third parties' lists never contain the record. A mismatched patient/document pair is refused and creates nothing. | `workflows.test.ts` → *consent*, *break-glass*, *lab links* |
+| C17 | A lab can upload into a patient's vault only while that patient's link is `ACTIVE`, and a refused upload stores nothing. | Uploads while pending, rejected, revoked or never linked are refused and leave no document row. The same lab succeeds while `ACTIVE`, and a report addressed to a non-patient id is 404. | `workflows.test.ts` → *lab links* |
+
+### 3.2 Evidence the tests can fail
+
+A test that has never been seen failing proves little. Each change below was made on purpose, the suite was run, and the change was reverted. *Table* mutations edit a test's specification; *code* mutations edit the server.
+
+| Mutation | Kind | What failed |
+|---|---|---|
+| Delete the `PATCH /lab-links/:id/reject` row | table | C1 inventory, naming the unlisted route |
+| Claim a lab may `GET /admin/users` | table | C3, exactly that cell |
+| Claim an unverified doctor may request consent | table | C3, exactly that cell |
+| Claim a linked lab may read the patient's own upload; claim a lapsed grant still reads | table | C5/C7: 4 read cells each, plus C11 for both actors |
+| Lookup by email no longer restricted to `role: 'patient'` | code | C15, both lookup endpoints |
+| Remove `requireVerifiedDoctor` from `POST /emergency-access` | code | C3 (that cell) and C13 (the grant row was written) |
+| `my-documents` filter forgets live break-glass grants | code | C11 for the two actors reading through a grant, while all 504 C5 cells still passed |
+| Remove a variable from the pinned test environment | harness | G1, naming the variable and the file that reads it |
+
+### 3.3 Observations (not failures)
+
+- **An unknown role is refused by a crash, not a 403.** For a user whose stored role is outside the four, the document routes return `500 Internal server error`, because the role switch's `never` branch throws. Nothing is served, so C9 holds. Outside production the 500 body also carries the stack trace; the error handler omits it only when `NODE_ENV=production`. No endpoint can produce such a role.
+- **Object-level refusals confirm that an id exists.** Another patient acting on a consent, grant or lab link gets 403, while an unknown id gets 404. That is the documented behaviour (API_LAB.md §3 for lab links). It lets a signed-in patient probe whether an ObjectId belongs to *some* record, never what that record contains.
 
 ---
 
@@ -95,6 +141,7 @@ Measured on the development machine (4 cores, repository on OneDrive), warm:
 
 | Step | Time |
 |---|---|
-| Global setup (compile check, chain + mongod, deploy) | 8.1 s |
+| Global setup (compile check, chain + mongod, deploy) | 6.7–8.1 s |
 | Importing the app into one worker | ~3.5 s (≈14 s cold) |
-| `npm test` with the harness file only | 22.9 s |
+| `npm test`: harness + suite 1, 4 files, 808 tests, 3 workers | 37–44 s (≈41 s wall clock) |
+| `documents.test.ts` alone (the 504-cell read matrix) | ≈33 s |
