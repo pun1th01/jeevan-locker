@@ -122,13 +122,13 @@ export default function PatientLookupField(props: PatientLookupFieldProps) {
     setSelectedDocumentId(null);
 
     try {
-      if (!doctorProps) {
+      if (props.mode === 'lab-link') {
         await props.onLinkRequest(trimmedQuery);
         setQuery('');
         return;
       }
 
-      doctorProps.onSelectionChange(null);
+      props.onSelectionChange(null);
       setResult(await patientService.lookup(trimmedQuery));
     } catch (error) {
       setLookupError(getApiErrorMessage(error));

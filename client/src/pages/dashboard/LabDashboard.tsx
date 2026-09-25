@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle2, FilePlus2, FlaskConical, Link2, Loader2, Plus, Trash2, Upload } from 'lucide-react';
-import { type FormEvent, useCallback, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
@@ -111,6 +111,10 @@ export default function LabDashboard() {
     }
   }, []);
 
+  useEffect(() => {
+    void loadDashboardData();
+  }, [loadDashboardData]);
+
   const activeLinks = useMemo(() => links.filter((link) => link.status === 'ACTIVE'), [links]);
   const selectedActiveLink = useMemo(
     () => activeLinks.find((link) => link.id === selectedActiveLinkId) ?? activeLinks[0] ?? null,
@@ -149,19 +153,17 @@ export default function LabDashboard() {
     for (const [index, row] of testValueRows.entries()) {
       const label = `Test value ${index + 1}`;
       const numericValue = Number(row.value);
-      const bounds = {
-        refLow: parseOptionalNumber(row.refLow),
-        refHigh: parseOptionalNumber(row.refHigh),
-        criticalLow: parseOptionalNumber(row.criticalLow),
-        criticalHigh: parseOptionalNumber(row.criticalHigh),
-      };
+      const refLow = parseOptionalNumber(row.refLow);
+      const refHigh = parseOptionalNumber(row.refHigh);
+      const criticalLow = parseOptionalNumber(row.criticalLow);
+      const criticalHigh = parseOptionalNumber(row.criticalHigh);
 
       if (!row.name.trim() || !row.unit.trim() || !row.value.trim() || !Number.isFinite(numericValue)) {
         setUploadError(`${label} needs a name, a finite numeric value, and a unit.`);
         return null;
       }
 
-      if (Object.values(bounds).some((bound) => bound === null)) {
+      if (refLow === null || refHigh === null || criticalLow === null || criticalHigh === null) {
         setUploadError(`${label} has an invalid range value.`);
         return null;
       }
@@ -170,10 +172,10 @@ export default function LabDashboard() {
         name: row.name.trim(),
         value: numericValue,
         unit: row.unit.trim(),
-        ...(bounds.refLow === undefined ? {} : { refLow: bounds.refLow }),
-        ...(bounds.refHigh === undefined ? {} : { refHigh: bounds.refHigh }),
-        ...(bounds.criticalLow === undefined ? {} : { criticalLow: bounds.criticalLow }),
-        ...(bounds.criticalHigh === undefined ? {} : { criticalHigh: bounds.criticalHigh }),
+        ...(refLow === undefined ? {} : { refLow }),
+        ...(refHigh === undefined ? {} : { refHigh }),
+        ...(criticalLow === undefined ? {} : { criticalLow }),
+        ...(criticalHigh === undefined ? {} : { criticalHigh }),
       });
     }
 
