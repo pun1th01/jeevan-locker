@@ -282,6 +282,53 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
               </div>
             ) : null}
 
+            {document?.testValues && document.testValues.length > 0 ? (
+              <div className="mt-3 overflow-hidden rounded-lg border border-slate-700/50 bg-slate-900/40">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-800/50 text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Test</th>
+                      <th className="px-4 py-3 font-medium">Result</th>
+                      <th className="px-4 py-3 font-medium">Reference</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {document.testValues.map((tv, idx) => {
+                      let statusColor = 'bg-slate-800 text-slate-300';
+                      if (tv.flag === 'critical') statusColor = 'bg-rose-500/20 text-rose-200';
+                      else if (tv.flag === 'high' || tv.flag === 'low') statusColor = 'bg-amber-500/20 text-amber-200';
+
+                      let refDisplay = '-';
+                      if (tv.refLow !== undefined && tv.refHigh !== undefined) {
+                        refDisplay = `${tv.refLow} - ${tv.refHigh}`;
+                      } else if (tv.refLow !== undefined) {
+                        refDisplay = `> ${tv.refLow}`;
+                      } else if (tv.refHigh !== undefined) {
+                        refDisplay = `< ${tv.refHigh}`;
+                      }
+
+                      return (
+                        <tr key={idx}>
+                          <td className="px-4 py-3 font-medium text-slate-200">{tv.name}</td>
+                          <td className="px-4 py-3">
+                            <span className="font-semibold text-white">{tv.value}</span>
+                            <span className="ml-1 text-xs text-slate-400">{tv.unit}</span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-400">{refDisplay}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold capitalize ${statusColor}`}>
+                              {tv.flag}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
             {integrityResult ? (
               <div className={`mt-3 rounded-md border p-4 text-sm ${integrityResult.verified ? 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100' : 'border-rose-400/25 bg-rose-400/10 text-rose-100'}`}>
                 <div className="flex items-center gap-2 font-semibold">

@@ -75,6 +75,12 @@ export default function DocumentList({
     }
 
     result.sort((a, b) => {
+      const aCritical = a.testValues?.some((tv) => tv.flag === 'critical') ?? false;
+      const bCritical = b.testValues?.some((tv) => tv.flag === 'critical') ?? false;
+
+      if (aCritical && !bCritical) return -1;
+      if (!aCritical && bCritical) return 1;
+
       if (sortOrder === 'Newest') {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       }
@@ -215,6 +221,11 @@ export default function DocumentList({
                       {highlightedDocumentId === document.id ? (
                         <span className="rounded-md bg-emerald-300/10 px-2 py-0.5 text-xs font-semibold text-emerald-100">
                           New
+                        </span>
+                      ) : null}
+                      {document.testValues?.some((tv) => tv.flag === 'critical') ? (
+                        <span className="rounded-md bg-rose-500/20 px-2 py-0.5 text-xs font-semibold text-rose-200">
+                          Critical Results
                         </span>
                       ) : null}
                     </div>
