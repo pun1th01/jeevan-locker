@@ -58,6 +58,8 @@ npm test
 
 **Nothing the report claims is mocked.** Transactions go to real contract bytecode on a real node; documents are really encrypted to disk and read back; every request goes through the real Express app, middleware and database. The single shortcut is how test users are created: inserted directly with a cost-4 bcrypt hash instead of the pre-save hook's cost 12 (~300 ms each), and given tokens from the real `generateAuthToken`. Login itself is tested separately, through the real endpoint and limiter.
 
+**The one intercepted call.** A single test (C38, *an expiry cannot overwrite a revocation…*) puts a spy on `EmergencyAccess.updateOne`. The spy pauses the expiry job's write, lets the real revoke request run in that gap, and then performs the real write. It changes no result; it only fixes the order of two real operations, the one interleaving that a looped race cannot force. Every database operation in that test is the real one.
+
 **Determinism rules the suite follows.**
 - No fixed sleeps. Every wait is `waitFor(<named condition>)` and times out with that name.
 - Time-based states are set, not waited for: a grant "lapses" because the test writes its `expiresAt` into the past, which is exactly the state the server acts on.
@@ -135,6 +137,19 @@ Specification: [ANCHORING.md](ANCHORING.md). The preimages are rebuilt **by the 
 | C32 | A lost anchor row is re-derived from the record itself, and only for events that happened. | Deleting a consent's APPROVED row, then running boot reconciliation, re-creates exactly that row, with the same preimage and digest and source `reconciliation`. A second run creates nothing. A rejected consent never gains an APPROVED or REVOKED row. The rebuilt row anchors by recovering the original transaction. | `anchors.test.ts` → *C32* |
 | C33 | An anchor that exhausts its attempts becomes `FAILED`, is audited, is visible to admins and can be retried to completion. | With `ANCHOR_MAX_ATTEMPTS=2` and the chain unreachable, the row fails after exactly two attempts, `failedAt` is set, and one `CHAIN_ANCHOR_FAILED` row names the event's actor. `GET /admin/anchors?status=FAILED` lists and counts it. `POST …/retry` re-queues it (`attempts: 0`, source `retry`), and with the chain back it anchors. A second retry is `409`, an unknown id `404`, and malformed list filters `400`. | `anchors.test.ts` → *C33* |
 
+### 3.4 Break-glass — suite 4 (`test/breakglass/`, 24 tests)
+
+Specification: the Task 7 design as documented in [EVENTS.md](EVENTS.md) (`emergency.granted`, `emergency.revoked`), [ANCHORING.md](ANCHORING.md) (GRANTED/REVOKED preimages) and `server/.env.example` (the cap, the re-grant window, the expiry job).
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C34 | A patient's revocation ends the doctor's access on the doctor's very next request, and is recorded exactly once. | After the revoke, with no sweep, no job and no wait, the doctor gets 403 on all four read paths, the document leaves the doctor's list, and the grant leaves the live list. One `EMERGENCY_ACCESS_REVOKED` row names the patient, and one `emergency.revoked` event goes to the doctor. A second revoke is `409` and writes neither. | `breakglass.test.ts` → *C34* |
+| C35 | A doctor who returns after being revoked is flagged everywhere, and only a real return is flagged. | Same doctor, same document, inside the window: `afterRevocation` and `followsRevokedGrantId` on the grant, `afterRevocation: 'true'` with the earlier grant and revocation time in the audit row, the "again after you revoked it" event, and the flag in the patient's list. The GRANTED preimage keeps exactly the documented eleven fields, so the flag stays off-chain. Not flagged: a first grant, another doctor, another document, or a revocation older than the window. | `breakglass.test.ts` → *C35* |
+| C36 | A doctor never holds more live grants than the cap, nor two live grants on one document — including under concurrent requests. | Sequentially: the request over the cap is refused and creates nothing, and a lapsed or revoked grant frees a slot. Concurrently over HTTP: six simultaneous requests at cap 2 grant exactly 2, and five simultaneous requests on one document create exactly one grant. Without any lock, as a second server process would be: eight concurrent inserts leave one live grant. A lapsed row still marked `ACTIVE` is expired exactly once (one audit row) and then replaced, alone and with six concurrent inserters. The per-doctor lock runs one request at a time per key, in order, never makes another key wait, and is released after a throw. | `breakglass.test.ts` → *C36*; `grantInsert.test.ts` |
+| C37 | `REVOKED` and `EXPIRED` are terminal. | A revoked grant whose window then passes stays `REVOKED` through the scheduled sweep, the batch sweep, the doctor-scoped sweep, the doctor's reads and a second revoke: `revokedAt`/`revokedBy` unchanged, no expiry row. An expired grant cannot be revoked (409) or read. | `breakglass.test.ts` → *C37* |
+| C38 | A lapsed grant is expired exactly once, whoever gets there first — and never over a revocation. | 30 rounds × 7 concurrent expirers (the global batch, the full sweep, the doctor-wide and document-scoped lazy sweeps, and three real requests from the doctor): one `EMERGENCY_ACCESS_EXPIRED` row per round, marked `system`, naming the doctor. 30 rounds of a patient revoking a lapsed grant while it expires: exactly one terminal state and one audit row each time. The interleaving no loop can force — the expiry reads `ACTIVE`, the revoke lands, then the expiry writes — is forced deterministically (see §2, *the one intercepted call*): the revocation stands. | `breakglass.test.ts` → *C38* |
+| C39 | The scheduled job ends a lapsed grant without any request from the doctor, and a backlog larger than one batch cannot be starved. | With the job running and no doctor activity, the grant becomes `EXPIRED`, with one audit row marked `system` that names the patient and doctor, and it appears in the patient's expired list. Twelve lapsed grants at batch size 5: one batch expires exactly the five oldest; one sweep drains the other seven, one row per grant. | `breakglass.test.ts` → *C39* |
+
 ---
 
 ## 4. Evidence the tests can fail
@@ -158,6 +173,16 @@ A test that has never been seen failing proves little. Each change below was mad
 | Leave the plaintext upload temp on disk | code | C19 (a second new file) and C25 (a file left after the chain failure) |
 | Skip the `DOCUMENT_INTEGRITY_FAILED` audit row | code | C21, all eight tamper cases |
 | Restore the old error path for an unreachable chain (a 500 with a stack) | code | C25: the patient-upload, lab-report and integrity outage cases |
+| Remove the per-doctor grant lock | code | C36: the concurrent-cap test (six requests at cap 2). The same-document test still passes, because the index alone prevents that duplicate. |
+| Drop the partial unique index | code | C36: all four lock-free insert tests (live conflict, lapsed row, eight concurrent inserts, six inserts racing a lapsed row). Both HTTP concurrency tests still pass: within one process the lock also serialises a doctor's requests. The index is what holds across processes and for the lapsed row. |
+| Remove both (the original bug) | code | C36: those four, plus both HTTP concurrency tests |
+| Revoke without its `ACTIVE` guard | code | C34 (the second revoke succeeded), C37 (both), C38 (the revoke-vs-expiry race) |
+| Expiry without its `ACTIVE` guard | code | C38, the deterministic interleaving only. Between expirers the guard is redundant (re-setting `EXPIRED` changes nothing), so this mutant **survived** the first version of the suite; the interleaving test was added because of it. |
+| The re-grant lookup ignores the document | code | C35, "same doctor on a different document" |
+| The revoke writes no audit row | code | C34, C37 |
+| The lock is not released when work throws | code | C36, the lock's release-on-throw test (the next holder waited forever) |
+| The sweep drains only one batch | code | C39, the backlog |
+| The expiry job never ticks | code | C39, the job without a doctor request |
 | Swap two keys of the GRANTED preimage | code | C26 (the test's own §2 preimage no longer matches); `verify:anchors` too |
 | Verdict ignores the chain (`verified = matchesRecord`) | code | C28: the not-yet-anchored row and the unreachable-node case |
 | Differing fields never reported | code | C29: all seven edit cases |
