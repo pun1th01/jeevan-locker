@@ -288,7 +288,7 @@ Response `200`: `{ documents: MedicalDocument[] }`.
 
 Role: any; access by the rule above. `403 You do not have permission to access this document` otherwise; `404 Document not found` for unknown ids. `/view` streams inline, `/download` as attachment, `/integrity` re-hashes the file and compares with the on-chain record (`{ verified, algorithm, currentHash, blockchainHash, blockchainTxHash, registeredAt }`; `409 This document was not registered on the blockchain` for pre-chain seed documents).
 
-Reading logs `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` respectively, with the lab as the actor.
+Reading logs `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` respectively, with the lab as the actor and `metadata: { accessMethod: 'lab', patientId }` (see API_ADMIN.md §4 for every method).
 
 ### `MedicalDocument` shape
 

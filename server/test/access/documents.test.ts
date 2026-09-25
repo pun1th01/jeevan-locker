@@ -60,25 +60,41 @@ type ActorName =
 
 const ALL_DOCS: readonly DocName[] = ['doc1', 'doc2', 'doc3', 'reportA', 'reportA2', 'docB', 'reportB'];
 
-const READABLE: Record<ActorName, readonly DocName[]> = {
-  patientA: ['doc1', 'doc2', 'doc3', 'reportA', 'reportA2'],
-  patientB: ['docB', 'reportB'],
-  admin: ALL_DOCS,
-  doctorShare: ['doc1'],
-  doctorUnverifiedShare: ['doc1'], // shared with them; verification does not gate reads already granted
-  doctorConsent: ['doc2'],
-  doctorGrant: ['doc3'],
-  doctorLaterUnverified: ['doc2', 'doc3'], // consent + live grant obtained while verified, then unverified
-  doctorStranger: [],
-  doctorPendingConsent: [],
-  doctorRejectedConsent: [],
-  doctorRevokedConsent: [],
-  doctorRevokedGrant: [],
-  doctorExpiredGrant: [], // grant row still says ACTIVE, but its window has lapsed
-  labIssuer: ['reportA'], // linked to patient A, yet cannot read A's own uploads
-  labRevoked: ['reportA2'], // link revoked after issuing: keeps its own report, per API_LAB.md §2
-  labOther: ['reportB'],
-  unknownRole: [],
+type AccessMethod = 'owner' | 'admin' | 'share' | 'consent' | 'emergency' | 'lab';
+
+/**
+ * The specification: which documents each actor may read, and WHY — the reason every served read must record as
+ * `metadata.accessMethod` on its audit row (C10). An actor absent from a document's entry is refused.
+ */
+const ACCESS: Record<ActorName, Partial<Record<DocName, AccessMethod>>> = {
+  patientA: { doc1: 'owner', doc2: 'owner', doc3: 'owner', reportA: 'owner', reportA2: 'owner' }, // lab reports issued to A are A's
+  patientB: { docB: 'owner', reportB: 'owner' },
+  admin: Object.fromEntries(ALL_DOCS.map((doc) => [doc, 'admin'])) as Record<DocName, AccessMethod>,
+  doctorShare: { doc1: 'share' },
+  doctorUnverifiedShare: { doc1: 'share' }, // shared with them; verification does not gate reads already granted
+  doctorConsent: { doc2: 'consent' },
+  doctorGrant: { doc3: 'emergency' },
+  doctorLaterUnverified: { doc2: 'consent', doc3: 'emergency' }, // consent + live grant obtained while verified, then unverified
+  doctorStranger: {},
+  doctorPendingConsent: {},
+  doctorRejectedConsent: {},
+  doctorRevokedConsent: {},
+  doctorRevokedGrant: {},
+  doctorExpiredGrant: {}, // grant row still says ACTIVE, but its window has lapsed
+  labIssuer: { reportA: 'lab' }, // linked to patient A, yet cannot read A's own uploads
+  labRevoked: { reportA2: 'lab' }, // link revoked after issuing: keeps its own report, per API_LAB.md §2
+  labOther: { reportB: 'lab' },
+  unknownRole: {},
+};
+
+const READABLE = {} as Record<ActorName, readonly DocName[]>;
+for (const actor of Object.keys(ACCESS) as ActorName[]) {
+  READABLE[actor] = Object.keys(ACCESS[actor]) as DocName[];
+}
+
+/** Whose document each one is — the patientId every served read of it must record. */
+const OWNER: Record<DocName, 'patientA' | 'patientB'> = {
+  doc1: 'patientA', doc2: 'patientA', doc3: 'patientA', reportA: 'patientA', reportA2: 'patientA', docB: 'patientB', reportB: 'patientB',
 };
 
 const ACTOR_NAMES = Object.keys(READABLE) as ActorName[];
@@ -95,6 +111,9 @@ const READ_ENDPOINTS = [
 const users = {} as Record<ActorName, IUser>;
 const tokens = {} as Record<ActorName, string>;
 const docIds = {} as Record<DocName, string>;
+/** The consent or grant each consent/emergency read must name in its audit row. */
+const consentIdOf: Partial<Record<ActorName, string>> = {};
+const grantIdOf: Partial<Record<ActorName, string>> = {};
 
 /** A user whose stored role is not one of the four. The schema enum is bypassed on purpose (raw collection insert). */
 const insertUnknownRoleUser = async (): Promise<IUser> => {
@@ -156,15 +175,15 @@ beforeAll(async () => {
   await shareDocument(patientA, docIds.doc1, users.doctorUnverifiedShare);
 
   // doc2: consent in every state.
-  await approvedConsent(users.doctorConsent, patientA, docIds.doc2);
-  await approvedConsent(users.doctorLaterUnverified, patientA, docIds.doc2);
+  consentIdOf.doctorConsent = (await approvedConsent(users.doctorConsent, patientA, docIds.doc2)).id;
+  consentIdOf.doctorLaterUnverified = (await approvedConsent(users.doctorLaterUnverified, patientA, docIds.doc2)).id;
   await requestConsent(users.doctorPendingConsent, patientA, docIds.doc2);
   await decideConsent(patientA, (await requestConsent(users.doctorRejectedConsent, patientA, docIds.doc2)).id, 'reject');
   await decideConsent(patientA, (await approvedConsent(users.doctorRevokedConsent, patientA, docIds.doc2)).id, 'revoke');
 
   // doc3: break-glass in every state.
-  await breakGlass(users.doctorGrant, patientA, docIds.doc3);
-  await breakGlass(users.doctorLaterUnverified, patientA, docIds.doc3);
+  grantIdOf.doctorGrant = (await breakGlass(users.doctorGrant, patientA, docIds.doc3)).id;
+  grantIdOf.doctorLaterUnverified = (await breakGlass(users.doctorLaterUnverified, patientA, docIds.doc3)).id;
   await revokeGrant(patientA, (await breakGlass(users.doctorRevokedGrant, patientA, docIds.doc3)).id);
   const lapsing = await breakGlass(users.doctorExpiredGrant, patientA, docIds.doc3);
   // The window lapses: the row keeps status ACTIVE until something sweeps it, which is the case to prove safe.
@@ -210,6 +229,18 @@ describe('read matrix: every actor x every document x every read endpoint', () =
 
     // Every served read is audited exactly once; a denied read leaves no access record.
     expect(await countAudit(actor, doc, endpoint.action), `audit rows for ${context}`).toBe(auditBefore + (allowed ? 1 : 0));
+
+    // ...and that row says WHY it was allowed: the method, whose document it is, and the consent or grant behind it.
+    const method = ACCESS[actor][doc];
+    if (method) {
+      const row = await AccessLog.findOne({ userId: users[actor]._id, targetDocument: new Types.ObjectId(docIds[doc]), action: endpoint.action }).sort({ timestamp: -1, _id: -1 });
+      const expected: Record<string, string> = { accessMethod: method, patientId: idOf(users[OWNER[doc]]) };
+      if (method === 'consent') expected.consentGrantId = consentIdOf[actor] ?? 'missing fixture';
+      if (method === 'emergency') expected.emergencyAccessId = grantIdOf[actor] ?? 'missing fixture';
+      if (endpoint.action === 'INTEGRITY_VERIFIED') expected.integrityVerified = 'true';
+      expect(row?.metadata, `audit metadata for ${context}`).toMatchObject(expected);
+      if (method === 'emergency') expect(row?.metadata?.expiresAt, context).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    }
   });
 
   // API_LAB.md §5: 404 Document not found for unknown ids. A malformed id is an unknown id — same answer, so the

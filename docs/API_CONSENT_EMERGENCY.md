@@ -321,7 +321,7 @@ A first grant, another doctor, another document, or a revocation older than the 
 | `EMERGENCY_ACCESS_REVOKED` | `DELETE /emergency-access/:id` (200) | patient | request | `{ emergencyAccessId, doctorId, patientId, grantedAt, expiresAt, revokedAt }` |
 | `EMERGENCY_ACCESS_EXPIRED` | the expiry job, or the lazy sweep on the doctor's reads | doctor | `system` | `{ emergencyAccessId, doctorId, patientId, expiresAt }` |
 
-Each document the doctor then reads through a consent or grant is audited separately (`DOCUMENT_ACCESS`, `DOCUMENT_PREVIEW`, `DOCUMENT_DOWNLOAD`, `INTEGRITY_VERIFIED`), with metadata naming the consent or grant that allowed it.
+Each document the doctor then reads through a consent or grant is audited separately (`DOCUMENT_ACCESS`, `DOCUMENT_PREVIEW`, `DOCUMENT_DOWNLOAD`, `INTEGRITY_VERIFIED`), with `metadata.accessMethod` `'consent'` (plus `consentGrantId`) or `'emergency'` (plus `emergencyAccessId` and `expiresAt`), and the document's `patientId` — API_ADMIN.md §4 lists every method.
 
 ---
 

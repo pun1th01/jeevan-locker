@@ -170,12 +170,17 @@ export const populateDocumentUsers = async (document: IMedicalDocument): Promise
 
 const validateAuthenticatedUser = (req: AuthenticatedRequest) => req.user ?? null;
 
-interface DocumentAccessDecision {
-  allowed: boolean;
-  consentGrantId?: string;
-  emergencyAccessId?: string;
-  emergencyExpiresAt?: string;
-}
+/**
+ * Why a read was allowed, recorded as `metadata.accessMethod` on every served read (DOCUMENT_ACCESS, DOCUMENT_PREVIEW,
+ * DOCUMENT_DOWNLOAD, INTEGRITY_VERIFIED) so the admin feed can say why each one happened.
+ */
+export type DocumentAccessMethod = 'owner' | 'admin' | 'share' | 'consent' | 'emergency' | 'lab';
+
+type DocumentAccessDecision =
+  | { allowed: false }
+  | { allowed: true; method: Exclude<DocumentAccessMethod, 'consent' | 'emergency'> }
+  | { allowed: true; method: 'consent'; consentGrantId: string }
+  | { allowed: true; method: 'emergency'; emergencyAccessId: string; emergencyExpiresAt: string };
 
 /**
  * Exhaustiveness guard for the role switches below. At compile time `role` narrows to `never` only when every
@@ -201,23 +206,23 @@ const getDocumentAccessDecision = async (
 ): Promise<DocumentAccessDecision> => {
   switch (user.role) {
     case 'admin':
-      return { allowed: true };
+      return { allowed: true, method: 'admin' };
 
     case 'patient':
-      return { allowed: document.uploadedBy.toString() === user.id };
+      return document.uploadedBy.toString() === user.id ? { allowed: true, method: 'owner' } : { allowed: false };
 
     case 'lab':
-      return { allowed: document.uploadedByLab?.toString() === user.id };
+      return document.uploadedByLab?.toString() === user.id ? { allowed: true, method: 'lab' } : { allowed: false };
 
     case 'doctor': {
       if (document.sharedWithDoctors.some((doctorId) => doctorId.toString() === user.id)) {
-        return { allowed: true };
+        return { allowed: true, method: 'share' };
       }
 
       const approvedConsent = await findApprovedConsent(user.id, document._id);
 
       if (approvedConsent) {
-        return { allowed: true, consentGrantId: approvedConsent._id.toString() };
+        return { allowed: true, method: 'consent', consentGrantId: approvedConsent._id.toString() };
       }
 
       const emergencyAccess = await findActiveEmergencyAccess(user.id, document._id);
@@ -228,6 +233,7 @@ const getDocumentAccessDecision = async (
 
       return {
         allowed: true,
+        method: 'emergency',
         emergencyAccessId: emergencyAccess._id.toString(),
         emergencyExpiresAt: emergencyAccess.expiresAt.toISOString(),
       };
@@ -239,24 +245,37 @@ const getDocumentAccessDecision = async (
   }
 };
 
+/**
+ * Metadata for the audit row of a SERVED read: always the access method and the document's patient, plus the consent
+ * or grant that allowed it. Exhaustive over the methods, so a new one cannot be audited without its own fields.
+ */
 const getDocumentAccessAuditMetadata = (
-  accessDecision: DocumentAccessDecision,
+  accessDecision: Extract<DocumentAccessDecision, { allowed: true }>,
   patientId: string
-): Record<string, string> | undefined => {
-  if (accessDecision.consentGrantId) {
-    return { accessMethod: 'consent', consentGrantId: accessDecision.consentGrantId, patientId };
-  }
+): Record<string, string> => {
+  switch (accessDecision.method) {
+    case 'owner':
+    case 'admin':
+    case 'share':
+    case 'lab':
+      return { accessMethod: accessDecision.method, patientId };
 
-  if (accessDecision.emergencyAccessId && accessDecision.emergencyExpiresAt) {
-    return {
+    case 'consent':
+      return { accessMethod: 'consent', patientId, consentGrantId: accessDecision.consentGrantId };
+
+    case 'emergency':
+      return {
         accessMethod: 'emergency',
-        emergencyAccessId: accessDecision.emergencyAccessId,
         patientId,
+        emergencyAccessId: accessDecision.emergencyAccessId,
         expiresAt: accessDecision.emergencyExpiresAt,
       };
-  }
 
-  return undefined;
+    default: {
+      const unhandled: never = accessDecision;
+      return unhandled;
+    }
+  }
 };
 
 
@@ -652,7 +671,7 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
       action: 'INTEGRITY_VERIFIED',
       targetDocument: document._id,
       ipAddress: getRequestIpAddress(req),
-      metadata: { integrityVerified: String(verified) },
+      metadata: { ...getDocumentAccessAuditMetadata(accessDecision, document.uploadedBy.toString()), integrityVerified: String(verified) },
     });
 
     res.json({

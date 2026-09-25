@@ -98,7 +98,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 | C7 | Consent and break-glass grant access only while live. Pending, rejected and revoked consents give nothing, and neither do revoked or lapsed grants — including a lapsed grant whose row still says `ACTIVE` because nothing has swept it yet. | One doctor per state, each refused on every read endpoint. | `documents.test.ts` → *read matrix* |
 | C8 | Doctor verification gates *initiating* access, not access already given: an unverified doctor keeps documents shared, consented or granted to them. | A doctor shared a document while unverified, and a doctor who obtained consent and a grant and was then unverified, both read exactly those documents. | `documents.test.ts` → *read matrix* |
 | C9 | A role the system does not know receives nothing, refused with the same clean 403 as any other denial; the role switch has no default that grants, and adding a role without a branch fails compilation. | A user row with role `superadmin` (inserted past the schema enum) gets exactly `403 {message}` on every read endpoint for every document, and a 403 on the list. It never gets a 500. The compile-time half was checked by adding a fifth role to `USER_ROLES`: `tsc` failed at both role switches. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
-| C10 | Every served read is audited exactly once, and a refused read leaves no access record. | Every matrix cell counts that actor's `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` rows for that document before and after: +1 when served, +0 when refused. | `documents.test.ts` → *read matrix* |
+| C10 | Every served read is audited exactly once, and records why it was allowed; a refused read leaves no access record. | Every matrix cell counts that actor's `DOCUMENT_ACCESS` / `DOCUMENT_PREVIEW` / `DOCUMENT_DOWNLOAD` / `INTEGRITY_VERIFIED` rows for that document before and after: +1 when served, +0 when refused. Each served cell's new row must carry the `accessMethod` the specification gives for that actor and document (`owner`, `admin`, `share`, `consent`, `emergency` or `lab`). It must also carry the document's `patientId`, the exact `consentGrantId` or `emergencyAccessId` (plus `expiresAt`) behind a consent or emergency read, and `integrityVerified: 'true'` on integrity rows. | `documents.test.ts` → *read matrix* |
 | C11 | A user's document list contains exactly the documents they are allowed to open. | For each actor, `GET /my-documents` restricted to this world equals the actor's row of the specification. This is separate from C5 because the list is built by a different query from the one that decides a single read. A list that forgot live grants fails here while every single-document read still passes (see §4). | `documents.test.ts` → *list mirrors decision* |
 | C12 | Only the owning patient can share a document, only with a doctor, and an upload cannot be assigned to anyone but its uploader. | Another patient and the issuing lab are refused. Sharing with an admin, a lab, a patient or an unknown-role user is refused and leaves `sharedWithDoctors` untouched. An upload carrying forged `uploadedBy`, `sharedWithDoctors` and `uploadedByLab` fields is stored as the caller's own and unshared, and the injected parties are refused. | `documents.test.ts` → *document writes* |
 | C13 | An unverified doctor cannot look up a patient, request consent or break glass, and a refused attempt writes nothing. Verification takes effect on the same token. | Each refusal is `403 {verification message}`, and no `PATIENT_LOOKUP` audit row, consent row or grant row is created. After an admin verifies the account, the same token succeeds at all three. | `workflows.test.ts` → *verification gate* |
@@ -150,7 +150,7 @@ Specification: the Task 7 design as documented in [EVENTS.md](EVENTS.md) (`emerg
 | C38 | A lapsed grant is expired exactly once, whoever gets there first — and never over a revocation. | 30 rounds × 7 concurrent expirers (the global batch, the full sweep, the doctor-wide and document-scoped lazy sweeps, and three real requests from the doctor): one `EMERGENCY_ACCESS_EXPIRED` row per round, marked `system`, naming the doctor. 30 rounds of a patient revoking a lapsed grant while it expires: exactly one terminal state and one audit row each time. The interleaving no loop can force — the expiry reads `ACTIVE`, the revoke lands, then the expiry writes — is forced deterministically (see §2, *the one intercepted call*): the revocation stands. | `breakglass.test.ts` → *C38* |
 | C39 | The scheduled job ends a lapsed grant without any request from the doctor, and a backlog larger than one batch cannot be starved. | With the job running and no doctor activity, the grant becomes `EXPIRED`, with one audit row marked `system` that names the patient and doctor, and it appears in the patient's expired list. Twelve lapsed grants at batch size 5: one batch expires exactly the five oldest; one sweep drains the other seven, one row per grant. | `breakglass.test.ts` → *C39* |
 
-### 3.5 Hardening — suite 5 (`test/hardening/`, 50 tests)
+### 3.5 Hardening — suite 5 (`test/hardening/`, 51 tests)
 
 Specification: [API_LAB.md](API_LAB.md) §3 (upload checks) and §6 (rate limits), [API_ADMIN.md](API_ADMIN.md) §3 (the lookup limiter runs before the verification gate), [ENCRYPTION.md](ENCRYPTION.md) §7 (no plaintext left behind), `server/.env.example` and `config/env.ts` (`TRUST_PROXY`). A refusal counts as a refusal only if it leaves nothing behind: no file of any kind in the uploads directory and no row.
 
@@ -178,6 +178,9 @@ A test that has never been seen failing proves little. Each change below was mad
 | Lookup by email no longer restricted to `role: 'patient'` | code | C15, both lookup endpoints |
 | Remove `requireVerifiedDoctor` from `POST /emergency-access` | code | C3 (that cell) and C13 (the grant row was written) |
 | `my-documents` filter forgets live break-glass grants | code | C11 for the two actors reading through a grant, while all 504 C5 cells still passed |
+| Record no `accessMethod` for owner, admin, share and lab reads (the previous code) | code | C10: 80 of the 92 served cells. The 12 that passed are consent and emergency reads on the three non-integrity endpoints, which already named their method. |
+| Record a doctor's share as `owner` | code | C10: both share readers × 4 endpoints = 8 cells |
+| Write `INTEGRITY_VERIFIED` rows without the method | code | C10: all 23 served `/integrity` cells |
 | Restore the old catch-all that threw on an unknown role | code | C9: 28 read cells and the list refusal (each got a 500) |
 | Add a fifth role to `USER_ROLES` | code | `tsc`, at both role switches (`not assignable to parameter of type 'never'`) |
 | Remove the AAD binding (file and wrapped key) | code | C22, the file-plus-key transplant only. Swapped files and swapped keys still fail without AAD because every file has its own key, so the transplant is the test that proves AAD matters. |
@@ -253,7 +256,7 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 12 files, 934 tests | **53–57 s** (56–60 s wall clock) |
+| `npm test` — 12 files, 935 tests | **53–61 s** (56–65 s wall clock) |
 | Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
@@ -271,6 +274,6 @@ Time spent running each file's tests (excluding its app import):
 | `access/workflows.test.ts` | 39 | 3.9 s |
 | `access/inventory.test.ts` | 215 | 3.1 s |
 | `hardening/trustProxyBoot.test.ts` | 1 | 2.9 s |
-| `hardening/uploads.test.ts` | 31 | 1.6 s |
+| `hardening/uploads.test.ts` | 32 | 1.6 s |
 | `breakglass/grantInsert.test.ts` | 7 | 1.2 s |
 | `harness.test.ts` | 8 | 0.5 s |

@@ -157,6 +157,21 @@ The flag is only *read* for doctors; patients and admins carry `false` and nothi
 | `DOCTOR_VERIFIED` | `PATCH /api/admin/users/:id/verify` (first call only) | `{ doctorId, doctorEmail }` |
 | `USER_LOGIN` | `POST /auth/login` | |
 
+### Why a read was allowed — `accessMethod`
+
+Every **served** read writes one row — `DOCUMENT_ACCESS` (`GET /documents/:id`), `DOCUMENT_PREVIEW` (`/view`), `DOCUMENT_DOWNLOAD` (`/download`) or `INTEGRITY_VERIFIED` (`/integrity`) — and its metadata always says why it was allowed:
+
+| `accessMethod` | Reader | Extra metadata |
+|---|---|---|
+| `owner` | the patient who owns the document (lab reports issued to them included) | |
+| `admin` | an admin | |
+| `share` | a doctor the patient shared the document with | |
+| `consent` | a doctor holding an `APPROVED` consent | `consentGrantId` |
+| `emergency` | a doctor holding a live break-glass grant | `emergencyAccessId`, `expiresAt` |
+| `lab` | the lab that issued the report | |
+
+Every such row also carries `patientId` (the document's owner); `INTEGRITY_VERIFIED` adds `integrityVerified: 'true' | 'false'`. A refused read writes no row. Rows written before this field existed (on a persistent database) have no `accessMethod`. See [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) for consents and grants.
+
 All 27 audit actions are in `server/src/models/AccessLog.ts` (mirrored in `client/src/types/audit.ts`) and rendered by the admin dashboard from `GET /api/audit/summary` (last 50 events + totals).
 
 ---
