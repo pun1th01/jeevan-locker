@@ -1,222 +1,296 @@
 # JeevanLocker
 
-JeevanLocker is a secure, role-based medical document management MVP designed to streamline how patients, doctors, and administrators interact with clinical records. Built on the MERN stack with TypeScript, the platform tackles the fragmentation of personal health records by providing a centralized, secure vault where patients control access to their sensitive documents. 
+JeevanLocker is a highly secure, blockchain-backed medical document management system. It enables patients to securely store, manage, and share their medical records with healthcare providers and laboratories.
 
-In its current MVP scope, the platform demonstrates a functional architecture for secure file uploads, role-based access control (RBAC), controlled document sharing, and comprehensive audit logging.
+## 1. Project Overview
 
----
+The current application is built with the following stack:
+- **Frontend**: React 19, TypeScript, Vite
+- **Backend**: Express 5, TypeScript, Mongoose
+- **Database**: MongoDB (with dynamic in-memory failover for local development)
+- **Document Storage**: Encrypted at rest (AES-256-GCM) on local disk
+- **Blockchain**: Hardhat local Ethereum-compatible network (used for document integrity verification and audit anchoring)
 
-## 🎯 Features
+## 2. Major Features
 
-### Authentication & Security
-* **JWT Authentication:** Secure, stateless session management using HTTP-only compatible token flows.
-* **Role-Based Access Control (RBAC):** Strict permissions dividing the platform into Patient, Doctor, and Admin workspaces.
-* **Protected Routes:** Frontend and backend validation preventing unauthorized access.
-* **Seeded Demo Accounts:** Auto-provisioned development accounts for immediate testing.
-* **Upload Validation:** Strict MIME type checking and file size limits (5MB) using Multer.
-* **Audit Logging:** Every login, document upload, and sharing event is recorded and timestamped with IP context.
+- **Secure Authentication**: Role-based access control (RBAC) with JWT.
+- **Encrypted Document Storage**: Documents are encrypted at rest using AES-256-GCM.
+- **Blockchain Integrity Verification**: A plaintext SHA-256 hash of the uploaded document is stored on-chain, proving document authenticity.
+- **Consent Workflow**: Patients explicitly grant, reject, or revoke access to doctors.
+- **Emergency / Break-Glass Access**: Verified doctors can request time-bound emergency access to documents without prior consent, subject to strict audit trails and limits.
+- **Audit Logging & Anchoring**: Critical actions (like consent grants and emergency access) are logged and periodically anchored to the blockchain.
+- **Lab Integration**: Dedicated Lab roles can link with patients, upload verified lab reports (with NABL certification), and highlight critical test values.
+- **Administrative Tools**: Admins can manage users, oversee audit anchors, and verify doctor accounts.
 
-### Medical Document Management
-* **Document Vault:** Centralized storage for patient medical histories.
-* **Metadata Management:** Documents are categorized by type, date, and description.
-* **Role-Based Retrieval:** Documents are strictly bound to their owner unless explicitly shared.
-* **Doctor Sharing Workflow:** Patients can temporarily grant access to specific doctors.
-* **Secure Previews & Downloads:** Handled directly through memory streams and secure headers to prevent unauthorized direct asset links.
+## 3. User Roles
 
-### Dashboards
-* **Patient Dashboard:** View personal health records, upload new documents, and manage active sharing permissions.
-* **Doctor Dashboard:** View records shared by patients, filtered efficiently for quick clinical access.
-* **Admin Dashboard:** Platform-wide oversight, system monitoring, and comprehensive audit log reviews.
+JeevanLocker supports four distinct roles:
 
-### UI/UX
-* **Modern Aesthetic:** Dark medical-tech theme utilizing Tailwind CSS and Radix UI primitives.
-* **Drag-and-Drop Uploads:** Intuitive file dropping with immediate validation feedback.
-* **State Management:** Loading spinners, context-aware error toasts, and smooth transitions.
-* **Responsive Design:** Mobile-first approach ensuring usability across all devices.
+1. **Patient**: Can upload documents, request lab links, approve/reject/revoke consent requests, and manage their health profile.
+2. **Doctor**: Can request access to patient documents. *Verified* doctors can use the Emergency / Break-Glass feature to bypass consent in life-threatening scenarios.
+3. **Lab**: Can request links with patients and upload verified lab reports with structured test data.
+4. **Admin**: Can view audit logs, manage anchor synchronization, and verify unverified doctor accounts. (Admin self-registration is strictly blocked).
 
----
+## 4. System Architecture
 
-## 🛠 Tech Stack
+```
+[ React Client ]
+       ↓
+[ Express API ]
+       ↓
+[ MongoDB ] — stores metadata, users, consents, and audit logs.
+       ↓
+[ Encrypted Document Storage ] — files are AES-256-GCM encrypted on disk.
+       ↓
+[ Hardhat Blockchain ] — smart contracts store integrity hashes and audit anchors.
+```
+During development, the Hardhat node runs locally to simulate an Ethereum-compatible network. Blockchain data is exclusively used for verifying data integrity and anchoring audits, while actual document content and PII never touch the chain.
 
-### Frontend
-- **Framework:** React 19 + TypeScript
-- **Tooling:** Vite
-- **Styling:** Tailwind CSS + Radix UI
-- **State Management:** Zustand (with persistence)
-- **Routing:** React Router v7
-- **HTTP Client:** Axios
+## 5. Document Encryption and Integrity
 
-### Backend
-- **Framework:** Node.js + Express
-- **Language:** TypeScript
-- **Database:** MongoDB + Mongoose (with `mongodb-memory-server` for dev)
-- **Authentication:** JSON Web Tokens (JWT) + bcrypt
-- **File Handling:** Multer
+1. When a patient uploads a document, the API computes the **plaintext SHA-256 hash**.
+2. The file is then **encrypted at rest** using AES-256-GCM with a server-side Master Key and stored on disk.
+3. The computed plaintext SHA-256 hash is submitted to the local blockchain via the `DocumentRegistry` contract.
+4. When a user requests integrity verification, the system retrieves the on-chain hash and compares it against the expected document hash, ensuring the file hasn't been tampered with.
 
----
+## 6. Blockchain Configuration
 
-## 🏗 System Architecture
+JeevanLocker uses two primary smart contracts deployed on a local Hardhat node:
+- **`DOCUMENT_REGISTRY_ADDRESS`**: Stores plaintext document hashes.
+- **`AUDIT_ANCHOR_ADDRESS`**: Stores cryptographic digests of critical audit events.
 
-* **Frontend/Backend Separation:** Clean decoupled architecture communicating via REST APIs.
-* **API Architecture:** Standardized response formats and centralized error handling middleware.
-* **RBAC Flow:** Requests hit authorization middlewares that verify JWT integrity and exact role requirements before mounting controllers.
-* **Secure File Flow:** Files are validated in-memory, stored securely, and served via protected endpoints—never directly exposed to public static folders.
-* **Audit Logging Architecture:** An independent Mongoose model hooks into critical controllers (Auth, Document) to silently write non-blocking logs for compliance tracking.
+The automated startup script handles deploying these contracts and updating the server's `.env` configuration dynamically.
 
----
+## 7. Authentication and Access Control
 
-## 📁 Project Structure
+- **Mechanism**: JWT Bearer tokens passed via the `Authorization` header.
+- **Verification**: Doctors must be explicitly verified by an Admin before they can perform sensitive actions (like Patient Lookups, requesting Consents, or using Break-Glass).
+- **Rate Limiting**: Strict rate limiting is applied to authentication and lookup routes to prevent enumeration.
 
-```text
-jeevan-locker/
-├── client/              # React/Vite Frontend
-│   ├── src/             
-│   │   ├── components/  # Reusable UI primitives (Radix) & Layouts
-│   │   ├── lib/         # Axios config & utility functions
-│   │   ├── pages/       # Role-specific dashboard views & auth
-│   │   ├── services/    # API integration layer
-│   │   └── store/       # Zustand state management
-│   └── package.json
-└── server/              # Express/Node Backend
-    ├── src/             
-    │   ├── config/      # Environment & DB configurations
-    │   ├── controllers/ # Request handlers
-    │   ├── middleware/  # JWT auth, RBAC, formatting, & error handling
-    │   ├── models/      # Mongoose Schemas (User, Document, AuditLog)
-    │   ├── routes/      # Express route definitions
-    │   └── utils/       # Validation, hashing, and seeding utilities
-    └── package.json
+## 8. Consent Flow
+
+1. **Doctor** searches for a patient (if verified) and requests access to a specific document.
+2. **Patient** sees a pending consent request in their dashboard.
+3. **Patient** approves or rejects the request.
+4. If approved, the doctor gains access. The patient can later **revoke** this consent at any time.
+
+## 9. Emergency / Break-Glass Flow
+
+1. A **Verified Doctor** declares an emergency to access a patient's document without prior consent.
+2. Access is immediately granted for a configurable time window (e.g., 15 minutes).
+3. The system enforces a strict cap on how many active emergency grants a doctor can hold concurrently.
+4. Once the window expires, access is automatically revoked.
+5. All break-glass actions are heavily audited and anchored to the blockchain.
+
+## 10. Lab Flow
+
+1. A **Lab** requests a link with a Patient using their email.
+2. The **Patient** approves the Lab Link.
+3. The **Lab** can now upload structured lab reports (including NABL Certification numbers, reference ranges, and critical value flags) directly to the patient's locker.
+4. Lab reports are marked as "Verified" and cannot be tampered with.
+
+See [API_LAB.md](docs/API_LAB.md) for full endpoint details.
+
+## 11. Admin Flow
+
+Admins are manually provisioned (via CLI/seed) and cannot self-register. Admins oversee the platform by verifying doctors, monitoring audit logs, and managing blockchain anchors.
+
+See [API_ADMIN.md](docs/API_ADMIN.md) for full endpoint details.
+
+## 12. API Reference
+
+### Authentication (`/api/auth`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/register` | Public | Register a new user |
+| POST | `/login` | Public | Authenticate and receive JWT |
+| GET | `/me` | Authenticated | Get current user profile |
+
+### Patient Lookup (`/api/patients`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| GET | `/lookup` | Verified Doctor | Look up a patient by email |
+
+### Documents (`/api/documents`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/upload` | Patient | Upload and encrypt a document |
+| GET | `/my-documents` | Authenticated | List accessible documents |
+| GET | `/:id/view` | Authenticated | Stream decrypted document |
+| GET | `/:id/download` | Authenticated | Download decrypted document |
+| GET | `/:id/integrity` | Authenticated | Verify blockchain integrity |
+| PATCH | `/:id/share` | Patient | Direct share with a doctor |
+
+### Consent (`/api/consents`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/request` | Verified Doctor | Request access to a document |
+| GET | `/my` | Doctor | List outgoing requests |
+| GET | `/pending` | Patient | List incoming pending requests |
+| GET | `/received` | Patient | List all incoming requests |
+| PATCH | `/:id/approve` | Patient | Approve a request |
+| PATCH | `/:id/reject` | Patient | Reject a request |
+| PATCH | `/:id/revoke` | Patient | Revoke an active consent |
+
+### Emergency / Break-Glass (`/api/emergency-access`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/` | Verified Doctor | Declare emergency for a document |
+| GET | `/` | Patient, Doctor | List emergency access records |
+| DELETE | `/:id` | Patient | Manually revoke an emergency grant |
+
+### Lab (`/api/lab-links`, `/api/lab-reports`)
+See [API_LAB.md](docs/API_LAB.md) for endpoints.
+
+### Admin (`/api/admin`)
+See [API_ADMIN.md](docs/API_ADMIN.md) for endpoints.
+
+## 13. Environment Variables
+
+Create a `server/.env` file based on `server/.env.example`.
+
+```env
+PORT=5000
+MONGO_URI=mongodb://127.0.0.1:27017/jeevan-locker
+JWT_SECRET=<your-random-secret>
+CLIENT_ORIGIN=http://localhost:5173
+TRUST_PROXY=
+
+# Blockchain configuration
+BLOCKCHAIN_RPC_URL=http://127.0.0.1:8545
+BLOCKCHAIN_PRIVATE_KEY=<your-hardhat-private-key>
+DOCUMENT_REGISTRY_ADDRESS=<auto-populated-by-startup>
+AUDIT_ANCHOR_ADDRESS=<auto-populated-by-startup>
+
+# Encryption keys
+DOCUMENT_MASTER_KEY=<base64-encoded-32-byte-key>
+DOCUMENT_MASTER_KEY_ID=primary
+
+# Configuration limits
+ANCHOR_RECONCILE_WINDOW_DAYS=0
+EMERGENCY_ACCESS_DURATION_MINUTES=15
+EMERGENCY_MAX_ACTIVE_GRANTS=5
+EMERGENCY_REGRANT_WINDOW_HOURS=24
+EMERGENCY_EXPIRY_POLL_MS=60000
+EMERGENCY_EXPIRY_BATCH_LIMIT=200
 ```
 
----
+## 14. Prerequisites
 
-## 🔑 Demo Accounts
-
-For immediate testing, development-only seeded accounts are initialized on startup:
-
-| Role | Email | Password |
-| :--- | :--- | :--- |
-| **Admin** | `admin@jeevanlocker.dev` | `Admin123!` |
-| **Doctor** | `doctor@jeevanlocker.dev` | `Doctor123!` |
-| **Patient** | `patient@jeevanlocker.dev` | `Patient123!` |
-| **Lab** | `lab@jeevanlocker.dev` | `Lab123!!` |
-
-*(Note: These accounts only seed when `NODE_ENV=development`)*
-
-### Creating an admin or a lab
-
-Admins and labs **cannot self-register** — `POST /api/auth/register` only accepts `patient` or `doctor`. Admin creation stays CLI-only permanently; labs can be created from the CLI or by an admin via `POST /api/admin/users` (see `docs/API_ADMIN.md`).
-
-```bash
-cd server
-npm run create:admin -- --name "Ops Admin" --email ops@example.com --password 'Str0ngPass!'
-npm run create:lab   -- --name "City Diagnostics" --email lab@example.com --password 'Str0ngPass!' --organisation "City Diagnostics Pvt Ltd"
-```
-
-The script connects **directly to `MONGO_URI`** and prints which database it reached. It deliberately bypasses the in-memory MongoDB that `npm run dev` spins up in development, because anything written there vanishes when that process exits. So:
-
-* You need a real `mongod` reachable at `MONGO_URI` (e.g. `mongodb://127.0.0.1:27017/jeevan-locker`). With no server there the script exits 1 with `ECONNREFUSED`.
-* The API must also be pointed at that same real database (not the in-memory fallback) for the new admin to be able to log in. In development the in-memory swap triggers whenever `MONGO_URI` contains `127.0.0.1` — see `server/src/config/db.ts`.
-* For the demo flow you don't need this at all: `admin@jeevanlocker.dev` is seeded automatically.
-
-Every run writes an `ADMIN_CREATED` or `LAB_CREATED` audit row (IP recorded as `cli`) that shows up in the admin dashboard. Provisioned accounts are `verified` by definition.
-
----
-
-## 🚀 Setup Instructions
-
-### Prerequisites
-- Node.js > 18.x
+- Node.js (v20+ recommended)
+- npm
 - Git
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/pun1th01/jeevan-locker.git
-cd jeevan-locker
-```
+*(Note: A local MongoDB installation is not strictly required for development testing due to the in-memory failover feature).*
 
-### 2. Backend Setup
+## 15. Installation
+
 ```bash
+git clone <repository-url>
+cd jeevan-locker
+
+# Install server dependencies
 cd server
 npm install
 
-# The dev server will automatically use an In-Memory MongoDB 
-# instance if no local MongoDB is detected on port 27017!
+# Install client dependencies
+cd ../client
+npm install
+```
+
+## 16. Environment Setup
+
+Copy the example environment file:
+```bash
+cd server
+cp .env.example .env
+```
+Ensure `JWT_SECRET` is set. The one-command startup script will automatically handle generating the `DOCUMENT_MASTER_KEY` and populating the blockchain addresses.
+
+## 17. One-Command Development Startup
+
+To run the entire stack (Blockchain, API, and Client) with automatic configuration:
+
+```bash
+cd server
+node scripts/dev-startup.js
+```
+
+**What this does:**
+1. Spawns the local Hardhat blockchain node.
+2. Waits for RPC readiness.
+3. Compiles and deploys the `DocumentRegistry` and `AuditAnchorRegistry` contracts.
+4. Extracts the contract addresses and writes them to `server/.env`.
+5. Generates `DOCUMENT_MASTER_KEY` in `.env` if missing.
+6. Starts the Express API (`npm run dev`), which automatically seeds demo users, documents, and on-chain hashes.
+7. Starts the Vite React client (`npm run dev`).
+
+*If startup fails, ensure port 8545, 5000, and 5173 are free, and verify `.env` formatting.*
+
+## 18. Manual Development Startup
+
+If you prefer to start services manually in separate terminals:
+
+```bash
+# Terminal 1: Blockchain
+cd server
+npm run chain
+
+# Terminal 2: Deployment
+cd server
+npm run chain:deploy
+# (Manually copy addresses to .env, and generate DOCUMENT_MASTER_KEY)
+
+# Terminal 3: Server
+cd server
+npm run dev
+
+# Terminal 4: Client
+cd client
 npm run dev
 ```
 
-### 3. Frontend Setup (New Terminal)
+## 19. MongoDB Development Gotcha
+
+**Important Note for Developers:**
+In `server/src/config/db.ts`, if `NODE_ENV` is `development` AND the `MONGO_URI` includes `127.0.0.1`, the server will automatically intercept the connection and spawn a temporary `mongodb-memory-server`.
+
+- **Why:** This ensures zero-configuration startup for new developers and prevents state contamination between test runs.
+- **Impact:** **Your database data will disappear every time you restart the server.**
+- **Workaround:** To use a persistent local database, change `MONGO_URI` in `.env` to use `localhost` instead of `127.0.0.1` (e.g., `mongodb://localhost:27017/jeevan-locker`), which bypasses the in-memory interceptor.
+
+## 20. Testing
+
+JeevanLocker features a robust automated test suite (934 tests) utilizing Vitest, Supertest, and Hardhat. The test suite automatically provisions its own in-memory MongoDB and Hardhat network, ignoring your `.env`.
+
+To run the test suite:
+```bash
+cd server
+npm test
+```
+The suite fully covers access control, break-glass workflow, encryption at rest, file validation, route guards, and blockchain anchoring logic. See [TESTING.md](docs/TESTING.md) for details.
+
+## 21. Build
+
+To compile the TypeScript backend for production:
+```bash
+cd server
+npm run build
+```
+
+To compile the React frontend:
 ```bash
 cd client
-npm install
-npm run dev
+npm run build
 ```
 
-The frontend will start at `http://localhost:5173`.
+## 22. Documentation Links
 
----
+- [Lab API Documentation](docs/API_LAB.md)
+- [Admin API Documentation](docs/API_ADMIN.md)
+- [System Events Documentation](docs/EVENTS.md)
+- [Testing Architecture](docs/TESTING.md)
 
-## 🔌 API Overview
+## 23. Project Status
 
-> Full, exact contracts for the Phase 0 additions live in [`docs/API_LAB.md`](docs/API_LAB.md) (lab accounts, patient links, verified report upload) and [`docs/API_ADMIN.md`](docs/API_ADMIN.md) (lab provisioning, doctor verification). The list below is the original MVP summary and is out of date.
-
-* **Auth:** `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
-* **Documents:** `GET /api/documents`, `POST /api/documents/upload`
-* **Sharing:** `POST /api/documents/:id/share`, `DELETE /api/documents/:id/share/:doctorId`
-* **Preview/Download:** `GET /api/documents/:id/preview`, `GET /api/documents/:id/download`
-* **Audit:** `GET /api/audit/logs`
-
----
-
-## 🛡 Security Considerations
-
-**Implemented Systems:**
-* **Stateless JWT Auth:** Bearer tokens used for localized session persistence.
-* **RBAC:** Backend endpoints enforce strict role verification.
-* **Protected File Access:** Documents cannot be requested without a valid JWT matching the owner or a doctor in the shared list.
-* **Upload Safety:** Multer buffer restrictions protect against infinite-size payload attacks.
-* **Audit Logging:** Core actions are independently verified and logged.
-
-**Future Scope:**
-* End-to-End Encryption (E2EE)
-* Immutable Blockchain Ledgers
-
-*(Note: The current implementation demonstrates the architectural foundation. It is an MVP and does not claim enterprise-grade compliance out-of-the-box.)*
-
----
-
-## 📈 Current MVP Status
-
-JeevanLocker is currently in the **MVP / Developer Preview** phase.
-The system efficiently handles localized end-to-end functionality including database persistence, UI, role gating, and core workflows. Intentionally simplified for demonstration, file assets are stored locally, and the database utilizes an in-memory fallback to eliminate friction during peer reviews.
-
----
-
-## 🔮 Future Improvements
-
-If extended towards production, the following architectures would be integrated:
-* **Blockchain Verification:** Storing document hashes on a ledger for immutable proof-of-authenticity.
-* **Encryption-at-Rest:** AES-256 implementation natively within the database layer.
-* **Cloud Storage:** Transitioning local buffers to AWS S3 / GCP buckets.
-* **Notifications:** Socket-based push alerts for document sharing.
-* **OCR Integration:** Extracting deep text from uploaded medical scans.
-* **Production Deployment:** Dockerization and CI/CD pipelines.
-
----
-
-## 📸 Screenshots
-
-*(Add screenshots here using markdown placeholders)*
-
-* ![Login Page](#) 
-* ![Patient Dashboard](#)
-* ![Doctor Dashboard](#)
-* ![Admin Dashboard](#)
-* ![Upload Modal](#)
-* ![Preview Modal](#)
-
----
-
-## 📄 License
-
-This project is open-source and available under the [MIT License](LICENSE).
+The Phase II implementation is feature-complete for demonstration purposes. The local blockchain integration, encryption at rest, lab workflows, and the 934-test automated suite are fully operational.
