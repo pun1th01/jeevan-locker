@@ -9,6 +9,7 @@ import { MedicalDocument, type IMedicalDocument, type MedicalDocumentMimeType } 
 import { User, type IUser } from '../models/User';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
 import { ENCRYPTED_FILE_SUFFIX, encryptFileToVault } from '../services/documentCrypto.service';
+import { registerDocumentHash } from '../services/documentRegistry.service';
 import type { UserRole } from '../types/user.types';
 import { SHA_256 } from './documentHash.util';
 import { computeTestValueFlag } from './testValues.util';
@@ -850,6 +851,9 @@ const ensureDemoDocument = async (
     throw new Error(`Missing seeded lab account: ${documentSeed.uploadedByLabEmail}`);
   }
 
+  console.log(`[Dev] Registering seeded document hash for ${documentSeed.title} on blockchain...`);
+  const registration = await registerDocumentHash(documentId.toString(), encrypted.sha256);
+
   const documentPayload = {
     title: documentSeed.title,
     originalFileName: documentSeed.originalFileName,
@@ -862,6 +866,9 @@ const ensureDemoDocument = async (
     hashAlgorithm: SHA_256,
     encryption: encrypted.encryption,
     plaintextSize: encrypted.plaintextSize,
+    blockchainDocumentId: documentId.toString(),
+    blockchainTxHash: registration.transactionHash,
+    blockchainRegisteredAt: registration.registeredAt,
     ...(uploadedByLab ? { uploadedByLab } : {}),
     ...(documentSeed.labName ? { labName: documentSeed.labName } : {}),
     ...(documentSeed.testName ? { testName: documentSeed.testName } : {}),
