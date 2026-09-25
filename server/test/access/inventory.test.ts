@@ -86,6 +86,10 @@ const ROUTES: readonly RouteSpec[] = [
   { method: 'delete', path: '/api/lab-links/:id', access: ['patient'] },
 
   { method: 'post', path: '/api/lab/reports', access: ['lab'] },
+
+  { method: 'get', path: '/api/notifications', access: ALL },
+  { method: 'patch', path: '/api/notifications/read-all', access: ALL },
+  { method: 'patch', path: '/api/notifications/:id/read', access: ALL },
 ];
 
 /** Where each routes file is mounted (mirrors app.ts). A new routes file needs an entry here AND access rows above. */
@@ -98,6 +102,7 @@ const ROUTER_PREFIX: Record<string, string> = {
   'emergencyAccess.routes.ts': '/api/emergency-access',
   'labLink.routes.ts': '/api/lab-links',
   'labReport.routes.ts': '/api/lab/reports',
+  'notification.routes.ts': '/api/notifications',
   'patients.routes.ts': '/api/patients',
 };
 
