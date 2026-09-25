@@ -11,6 +11,7 @@ import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.mi
 import { ENCRYPTED_FILE_SUFFIX, encryptFileToVault } from '../services/documentCrypto.service';
 import type { UserRole } from '../types/user.types';
 import { SHA_256 } from './documentHash.util';
+import { computeTestValueFlag } from './testValues.util';
 
 interface DemoAccount {
   name: string;
@@ -32,6 +33,24 @@ interface DemoDocumentSeed {
   createdAt: Date;
   sharedWithDoctorEmails: string[];
   asset: DemoAsset;
+  uploadedByLabEmail?: string;
+  labName?: string;
+  testName?: string;
+  nablCertNumber?: string;
+  authorizingDoctorName?: string;
+  hospitalName?: string;
+  reportDate?: Date;
+  testValues?: DemoTestValueSeed[];
+}
+
+interface DemoTestValueSeed {
+  name: string;
+  value: number;
+  unit: string;
+  refLow?: number;
+  refHigh?: number;
+  criticalLow?: number;
+  criticalHigh?: number;
 }
 
 type DemoAsset =
@@ -241,6 +260,65 @@ const demoDocuments: DemoDocumentSeed[] = [
         'Report status: Finalized by radiology consultant.',
       ],
     },
+  },
+  {
+    key: 'aarav-lab-cbc',
+    ownerEmail: 'patient@jeevanlocker.dev',
+    title: 'Complete Blood Count (CBC)',
+    originalFileName: 'cbc-report-aarav-2026.pdf',
+    storedFileName: 'demo-aarav-cbc-lab-2026.pdf',
+    mimeType: 'application/pdf',
+    createdAt: date('2026-05-24T09:00:00+05:30'),
+    sharedWithDoctorEmails: ['doctor@jeevanlocker.dev'],
+    asset: {
+      kind: 'pdf',
+      subtitle: 'Structured Lab Report - Normal',
+      sections: [
+        'Patient: Aarav Sharma | UHID: JLN-PT-1001',
+        'Please refer to the JeevanLocker dashboard for structured test results.',
+      ],
+    },
+    uploadedByLabEmail: 'lab@jeevanlocker.dev',
+    labName: 'Thyrocare Diagnostics',
+    testName: 'Complete Blood Count',
+    nablCertNumber: 'MC-2001',
+    authorizingDoctorName: 'Dr. R. K. Singh',
+    hospitalName: 'Thyrocare Central Lab',
+    reportDate: date('2026-05-24T08:30:00+05:30'),
+    testValues: [
+      { name: 'Hemoglobin', value: 14.2, unit: 'g/dL', refLow: 13.8, refHigh: 17.2 },
+      { name: 'WBC', value: 7500, unit: '/µL', refLow: 4500, refHigh: 11000 },
+    ],
+  },
+  {
+    key: 'priya-lab-lipid',
+    ownerEmail: 'patient2@jeevanlocker.dev',
+    title: 'Lipid & Glucose Panel',
+    originalFileName: 'lipid-glucose-priya-2026.pdf',
+    storedFileName: 'demo-priya-lipid-lab-2026.pdf',
+    mimeType: 'application/pdf',
+    createdAt: date('2026-05-25T10:15:00+05:30'),
+    sharedWithDoctorEmails: ['doctor@jeevanlocker.dev'],
+    asset: {
+      kind: 'pdf',
+      subtitle: 'Structured Lab Report - Critical',
+      sections: [
+        'Patient: Priya Nair | UHID: JLN-PT-1002',
+        'Please refer to the JeevanLocker dashboard for structured test results and flag highlighting.',
+      ],
+    },
+    uploadedByLabEmail: 'lab@jeevanlocker.dev',
+    labName: 'Thyrocare Diagnostics',
+    testName: 'Lipid & Glucose Panel',
+    nablCertNumber: 'MC-2001',
+    authorizingDoctorName: 'Dr. R. K. Singh',
+    hospitalName: 'Thyrocare Central Lab',
+    reportDate: date('2026-05-25T09:45:00+05:30'),
+    testValues: [
+      { name: 'Fasting Glucose', value: 310, unit: 'mg/dL', refLow: 70, refHigh: 100, criticalHigh: 300 },
+      { name: 'Total Cholesterol', value: 220, unit: 'mg/dL', refHigh: 200 },
+      { name: 'HDL', value: 45, unit: 'mg/dL', refLow: 40, refHigh: 60 },
+    ],
   },
 ];
 
@@ -759,6 +837,19 @@ const ensureDemoDocument = async (
   });
   await fs.unlink(plaintextPath);
 
+  const testValues = documentSeed.testValues?.map((tv) => ({
+    ...tv,
+    flag: computeTestValueFlag(tv.value, tv),
+  }));
+
+  const uploadedByLab = documentSeed.uploadedByLabEmail
+    ? userByEmail.get(documentSeed.uploadedByLabEmail)?._id
+    : undefined;
+
+  if (documentSeed.uploadedByLabEmail && !uploadedByLab) {
+    throw new Error(`Missing seeded lab account: ${documentSeed.uploadedByLabEmail}`);
+  }
+
   const documentPayload = {
     title: documentSeed.title,
     originalFileName: documentSeed.originalFileName,
@@ -771,6 +862,14 @@ const ensureDemoDocument = async (
     hashAlgorithm: SHA_256,
     encryption: encrypted.encryption,
     plaintextSize: encrypted.plaintextSize,
+    ...(uploadedByLab ? { uploadedByLab } : {}),
+    ...(documentSeed.labName ? { labName: documentSeed.labName } : {}),
+    ...(documentSeed.testName ? { testName: documentSeed.testName } : {}),
+    ...(documentSeed.nablCertNumber ? { nablCertNumber: documentSeed.nablCertNumber } : {}),
+    ...(documentSeed.authorizingDoctorName ? { authorizingDoctorName: documentSeed.authorizingDoctorName } : {}),
+    ...(documentSeed.hospitalName ? { hospitalName: documentSeed.hospitalName } : {}),
+    ...(documentSeed.reportDate ? { reportDate: documentSeed.reportDate } : {}),
+    ...(testValues ? { testValues } : {}),
   };
 
   if (!existingDocument) {
