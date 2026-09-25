@@ -6,7 +6,7 @@ import type {
   RequestLabLinkInput,
   UploadLabReportInput,
 } from '../types/lab';
-import type { MedicalDocument } from '../types/document';
+import type { LabMedicalDocument } from '../types/document';
 
 const appendOptionalText = (formData: FormData, field: string, value: string | undefined) => {
   const trimmedValue = value?.trim();
@@ -27,10 +27,16 @@ export const labService = {
     return data.links;
   },
 
+  /** Every report this lab issued. The server omits `sharedWithDoctors` for labs, hence the lab-specific type. */
+  async getIssuedReports(): Promise<LabMedicalDocument[]> {
+    const { data } = await api.get<{ documents: LabMedicalDocument[] }>('/documents/my-documents');
+    return data.documents;
+  },
+
   async uploadReport(
     input: UploadLabReportInput,
     onProgress?: (progress: number) => void
-  ): Promise<MedicalDocument> {
+  ): Promise<LabMedicalDocument> {
     const formData = new FormData();
     formData.append('file', input.file);
     formData.append('patientId', input.patientId);
@@ -46,7 +52,7 @@ export const labService = {
       formData.append('testValues', JSON.stringify(input.testValues));
     }
 
-    const { data } = await api.post<{ document: MedicalDocument }>('/lab/reports', formData, {
+    const { data } = await api.post<{ document: LabMedicalDocument }>('/lab/reports', formData, {
       onUploadProgress: (progressEvent) => {
         if (!progressEvent.total || !onProgress) {
           return;

@@ -85,7 +85,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
-### 3.1 Access control — suite 1 (`test/access/`, 802 tests)
+### 3.1 Access control — suite 1 (`test/access/`, 803 tests)
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 | C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 35 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the three gated routes gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
 | C4 | Identity and role are read from the database on every request. The role inside a token is ignored, and forged, expired, malformed, wrong-secret and deleted-user tokens are all refused. | A patient's token re-signed to claim `admin` still gets 403 on admin routes; an admin's token claiming `patient` still gets 200; a lab's token claiming `doctor` still cannot look up or break glass. Wrong secret, expired, unknown user, missing `userId`, non-JWT and non-Bearer headers each get 401 with their documented message. A valid token stops working the moment its user is deleted. | `inventory.test.ts` → *tokens* |
 | C5 | A document is readable by its owner, by an admin, and by a doctor holding a share, an approved consent or a live break-glass grant — and by nobody else. | A world of 7 documents (patient uploads, lab reports, a second patient's records) and 18 actors covering every relationship. Every actor tries every document on each of the 4 read endpoints (`/:id`, `/view`, `/download`, `/integrity`): 504 cells. An allowed cell must return 200 with the right content: the right id, an `inline` or `attachment` disposition, `verified: true` from the chain. A refused cell must return exactly `403 {message}` and nothing else. Unknown and malformed ids give every role `404 Document not found`. | `documents.test.ts` → *read matrix* |
-| C6 | A lab reads only the reports it issued. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. | `documents.test.ts` → *read matrix* |
+| C6 | A lab reads only the reports it issued, and never learns which doctors a patient shared them with. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. Every lab response — `GET /:id`, `my-documents` — carries no `sharedWithDoctors`, while every other reader's does. A report the patient shared with two doctors leaks neither doctor's id nor email to its lab on `/:id`, `/view`, `/download`, `/integrity`, `my-documents` or the upload response itself; the patient still sees both. | `documents.test.ts` → *read matrix*, *list mirrors decision*, *a lab never learns…* |
 | C7 | Consent and break-glass grant access only while live. Pending, rejected and revoked consents give nothing, and neither do revoked or lapsed grants — including a lapsed grant whose row still says `ACTIVE` because nothing has swept it yet. | One doctor per state, each refused on every read endpoint. | `documents.test.ts` → *read matrix* |
 | C8 | Doctor verification gates *initiating* access, not access already given: an unverified doctor keeps documents shared, consented or granted to them. | A doctor shared a document while unverified, and a doctor who obtained consent and a grant and was then unverified, both read exactly those documents. | `documents.test.ts` → *read matrix* |
 | C9 | A role the system does not know receives nothing, refused with the same clean 403 as any other denial; the role switch has no default that grants, and adding a role without a branch fails compilation. | A user row with role `superadmin` (inserted past the schema enum) gets exactly `403 {message}` on every read endpoint for every document, and a 403 on the list. It never gets a 500. The compile-time half was checked by adding a fifth role to `USER_ROLES`: `tsc` failed at both role switches. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
@@ -180,6 +180,10 @@ A test that has never been seen failing proves little. Each change below was mad
 | `my-documents` filter forgets live break-glass grants | code | C11 for the two actors reading through a grant, while all 504 C5 cells still passed |
 | Record no `accessMethod` for owner, admin, share and lab reads (the previous code) | code | C10: 80 of the 92 served cells. The 12 that passed are consent and emergency reads on the three non-integrity endpoints, which already named their method. |
 | Record a doctor's share as `owner` | code | C10: both share readers × 4 endpoints = 8 cells |
+| Serialize documents without the viewer's role (the previous code: every reader got `sharedWithDoctors`) | code | C6: the 3 lab `GET /:id` cells, the 3 lab list rows and the shared-report test (7) |
+| Hide `sharedWithDoctors` from every reader | code | C6: 29 — every non-lab `GET /:id` cell and list, and the patient control |
+| Apply the lab rule to `my-documents` but not `GET /:id` | code | C6: the 3 lab `GET /:id` cells and the shared-report test |
+| Serialize the lab's own upload response as if for an admin | code | C6: the shared-report test (the upload response) |
 | Serialize the consent write responses unjoined (the old code: "Unknown patient" …) | code | `workflows.test.ts`, *consent write responses name the real patient, doctor and document* |
 | Populate the consent in place before its audit row and anchor are written | code | C26, C28 and C29: the anchored preimage would carry whole user documents instead of ids. This is why the write responses use a separate populated read. |
 | Write `INTEGRITY_VERIFIED` rows without the method | code | C10: all 23 served `/integrity` cells |
@@ -258,7 +262,7 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 12 files, 936 tests | **53–61 s** (56–65 s wall clock) |
+| `npm test` — 12 files, 937 tests | **53–61 s** (56–65 s wall clock) |
 | Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |

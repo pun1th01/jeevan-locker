@@ -8,10 +8,9 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { getApiErrorMessage } from '../../lib/api';
-import { documentService } from '../../services/document.service';
 import { labService } from '../../services/lab.service';
 import { useAuthStore } from '../../store/useAuthStore';
-import type { MedicalDocument } from '../../types/document';
+import type { LabMedicalDocument } from '../../types/document';
 import type { LabLink, LabReportTestValueInput } from '../../types/lab';
 
 interface LabReportForm {
@@ -82,7 +81,7 @@ const parseOptionalNumber = (value: string): number | undefined | null => {
 export default function LabDashboard() {
   const user = useAuthStore((state) => state.user);
   const [links, setLinks] = useState<LabLink[]>([]);
-  const [reports, setReports] = useState<MedicalDocument[]>([]);
+  const [reports, setReports] = useState<LabMedicalDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -94,14 +93,14 @@ export default function LabDashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [previewDocument, setPreviewDocument] = useState<MedicalDocument | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<LabMedicalDocument | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
     setPageError(null);
 
     try {
-      const [nextLinks, nextReports] = await Promise.all([labService.getLinks(), documentService.getMyDocuments()]);
+      const [nextLinks, nextReports] = await Promise.all([labService.getLinks(), labService.getIssuedReports()]);
       setLinks(nextLinks);
       setReports(nextReports);
     } catch (error) {

@@ -50,6 +50,15 @@ export interface MedicalDocument {
   updatedAt: string;
 }
 
+/**
+ * A document as the server sends it to a LAB: the same shape without `sharedWithDoctors`. A lab never learns which
+ * doctors a patient shared a document with, not even for a report it issued.
+ */
+export type LabMedicalDocument = Omit<MedicalDocument, 'sharedWithDoctors'>;
+
+/** Anything the shared document components (DocumentList, DocumentPreviewModal) can render. */
+export type AnyMedicalDocument = MedicalDocument | LabMedicalDocument;
+
 export interface UploadDocumentInput {
   title: string;
   file: File;

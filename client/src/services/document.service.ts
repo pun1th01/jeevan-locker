@@ -67,7 +67,7 @@ export const documentService = {
     }
   },
 
-  async downloadDocumentFile(document: MedicalDocument): Promise<void> {
+  async downloadDocumentFile(document: Pick<MedicalDocument, 'id' | 'originalFileName'>): Promise<void> {
     const data = await api
       .get<Blob>(`/documents/${document.id}/download`, {
         responseType: 'blob',

@@ -172,5 +172,5 @@ export const uploadLabReport: RequestHandler = asyncHandler(async (req, res) => 
   });
 
   const populatedDocument = await populateDocumentUsers(document);
-  res.status(201).json({ document: serializeMedicalDocument(populatedDocument) });
+  res.status(201).json({ document: serializeMedicalDocument(populatedDocument, lab.role) });
 });

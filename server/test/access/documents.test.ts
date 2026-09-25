@@ -87,6 +87,9 @@ const ACCESS: Record<ActorName, Partial<Record<DocName, AccessMethod>>> = {
   unknownRole: {},
 };
 
+/** Labs never receive `sharedWithDoctors` (who else the patient shared a document with); every other reader does. */
+const isLab = (actor: ActorName) => actor === 'labIssuer' || actor === 'labRevoked' || actor === 'labOther';
+
 const READABLE = {} as Record<ActorName, readonly DocName[]>;
 for (const actor of Object.keys(ACCESS) as ActorName[]) {
   READABLE[actor] = Object.keys(ACCESS[actor]) as DocName[];
@@ -216,7 +219,12 @@ describe('read matrix: every actor x every document x every read endpoint', () =
 
     if (allowed) {
       expect(response.status, context).toBe(200);
-      if (endpoint.suffix === '') expect(response.body.document.id, context).toBe(docIds[doc]);
+      if (endpoint.suffix === '') {
+        expect(response.body.document.id, context).toBe(docIds[doc]);
+        if (isLab(actor)) expect(response.body.document, context).not.toHaveProperty('sharedWithDoctors');
+        else expect(response.body.document, context).toHaveProperty('sharedWithDoctors');
+      }
+      if (endpoint.suffix === '/integrity') expect(response.body, context).not.toHaveProperty('sharedWithDoctors');
       if (endpoint.suffix === '/view') expect(response.headers['content-disposition'], context).toMatch(/^inline/);
       if (endpoint.suffix === '/download') expect(response.headers['content-disposition'], context).toMatch(/^attachment/);
       if (endpoint.suffix === '/integrity') expect(response.body.verified, context).toBe(true);
@@ -263,6 +271,11 @@ describe('list mirrors decision: my-documents holds exactly what the actor may o
 
     const worldIds = new Set(Object.values(docIds));
     const listed = (response.body.documents as { id: string }[]).map((document) => document.id).filter((id) => worldIds.has(id));
+
+    for (const document of response.body.documents as Record<string, unknown>[]) {
+      if (isLab(actor)) expect(document, `${actor} list`).not.toHaveProperty('sharedWithDoctors');
+      else expect(document, `${actor} list`).toHaveProperty('sharedWithDoctors');
+    }
     expect(listed.sort()).toEqual(READABLE[actor].map((doc) => docIds[doc]).sort());
   });
 
@@ -270,6 +283,47 @@ describe('list mirrors decision: my-documents holds exactly what the actor may o
     const response = await call('get', '/api/documents/my-documents', tokens.unknownRole);
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ message: 'You do not have permission to access this resource' });
+  });
+});
+
+describe('a lab never learns which doctors a patient shared its report with', () => {
+  it('no sharedWithDoctors and no doctor id or email in any response the issuing lab receives — while the patient still sees them', async () => {
+    const patient = await createUser('patient');
+    const lab = await createUser('lab');
+    const doctors = [await createUser('doctor'), await createUser('doctor')];
+    await activeLabLink(lab, patient);
+
+    // The upload response itself is a document response to the lab.
+    const uploaded = await call('post', '/api/lab/reports', tokenFor(lab))
+      .field('patientId', idOf(patient))
+      .field('title', 'Shared report')
+      .attach('file', samplePdf(), { filename: 'r.pdf', contentType: 'application/pdf' });
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.body.document).not.toHaveProperty('sharedWithDoctors');
+    const reportId: string = uploaded.body.document.id;
+
+    for (const doctor of doctors) await shareDocument(patient, reportId, doctor);
+    const secrets = doctors.flatMap((doctor) => [idOf(doctor), doctor.email]);
+    const leaks = (payload: string) => secrets.filter((secret) => payload.includes(secret));
+
+    const asLab = {
+      document: await call('get', `/api/documents/${reportId}`, tokenFor(lab)),
+      integrity: await call('get', `/api/documents/${reportId}/integrity`, tokenFor(lab)),
+      list: await call('get', '/api/documents/my-documents', tokenFor(lab)),
+      view: await call('get', `/api/documents/${reportId}/view`, tokenFor(lab)).buffer(true),
+      download: await call('get', `/api/documents/${reportId}/download`, tokenFor(lab)).buffer(true),
+    };
+    for (const [name, response] of Object.entries(asLab)) {
+      expect(response.status, name).toBe(200);
+      const payload = Buffer.isBuffer(response.body) ? response.body.toString('latin1') : JSON.stringify(response.body);
+      expect(leaks(payload), `${name} leaks doctor identifiers to the lab`).toEqual([]);
+    }
+    expect(asLab.document.body.document).not.toHaveProperty('sharedWithDoctors');
+    expect((asLab.list.body.documents as Record<string, unknown>[]).find((document) => document.id === reportId)).not.toHaveProperty('sharedWithDoctors');
+
+    // Control: the owning patient still sees both doctors.
+    const asPatient = await call('get', `/api/documents/${reportId}`, tokenFor(patient));
+    expect((asPatient.body.document.sharedWithDoctors as { id: string }[]).map((doctor) => doctor.id).sort()).toEqual(doctors.map(idOf).sort());
   });
 });
 

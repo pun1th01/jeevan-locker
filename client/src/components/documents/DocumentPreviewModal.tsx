@@ -3,11 +3,11 @@ import { AlertCircle, Download, FileText, FlaskConical, Image, Loader2, ShieldCh
 import { useEffect, useState } from 'react';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
-import type { IntegrityVerificationResult, MedicalDocument } from '../../types/document';
+import type { AnyMedicalDocument, IntegrityVerificationResult, MedicalDocument } from '../../types/document';
 import { Button } from '../ui/button';
 
 interface DocumentPreviewModalProps {
-  document: MedicalDocument | null;
+  document: AnyMedicalDocument | null;
   isOpen: boolean;
   onClose: () => void;
 }

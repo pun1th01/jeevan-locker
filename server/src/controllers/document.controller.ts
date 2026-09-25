@@ -56,7 +56,8 @@ export interface MedicalDocumentResponse {
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
   uploadedBy: SafeUser;
-  sharedWithDoctors: SafeUser[];
+  /** Which doctors the patient shared the document with. Never sent to a lab — see receivesSharing. */
+  sharedWithDoctors?: SafeUser[];
   documentHash?: string;
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
@@ -107,7 +108,28 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
   };
 };
 
-export const serializeMedicalDocument = (document: IMedicalDocument): MedicalDocumentResponse => {
+/**
+ * Whether a reader receives `sharedWithDoctors` — the doctors a patient chose to share a document with, with their
+ * names and emails. A lab issues reports but takes no part in the patient's care decisions, so it never learns who
+ * else can read a document, not even one it issued. Exhaustive over the roles: a new role must decide explicitly.
+ */
+const receivesSharing = (viewer: UserRole): boolean => {
+  switch (viewer) {
+    case 'patient':
+    case 'doctor':
+    case 'admin':
+      return true;
+    case 'lab':
+      return false;
+    default: {
+      const unhandled: never = viewer;
+      return Boolean(unhandled);
+    }
+  }
+};
+
+/** The document as `viewer` may see it. Every document response goes through here with the caller's role. */
+export const serializeMedicalDocument = (document: IMedicalDocument, viewer: UserRole): MedicalDocumentResponse => {
   const documentWithUsers = document as DocumentWithUsers;
 
   return {
@@ -116,7 +138,7 @@ export const serializeMedicalDocument = (document: IMedicalDocument): MedicalDoc
     originalFileName: document.originalFileName,
     mimeType: document.mimeType,
     uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
-    sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference),
+    ...(receivesSharing(viewer) ? { sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference) } : {}),
     documentHash: document.documentHash,
     hashAlgorithm: document.hashAlgorithm,
     blockchainTxHash: document.blockchainTxHash,
@@ -505,7 +527,7 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
   });
 
   const populatedDocument = await populateDocumentUsers(document);
-  res.status(201).json({ document: serializeMedicalDocument(populatedDocument) });
+  res.status(201).json({ document: serializeMedicalDocument(populatedDocument, user.role) });
 });
 
 /**
@@ -567,7 +589,7 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
     .populate('sharedWithDoctors', USER_REFERENCE_FIELDS)
     .populate('uploadedByLab', USER_REFERENCE_FIELDS);
 
-  res.json({ documents: documents.map(serializeMedicalDocument) });
+  res.json({ documents: documents.map((document) => serializeMedicalDocument(document, user.role)) });
 });
 
 export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
@@ -602,7 +624,7 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
   });
 
   const populatedDocument = await populateDocumentUsers(document);
-  res.json({ document: serializeMedicalDocument(populatedDocument) });
+  res.json({ document: serializeMedicalDocument(populatedDocument, user.role) });
 });
 
 export const viewDocument: RequestHandler = asyncHandler(async (req, res, next) => {
@@ -756,6 +778,6 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
 
   res.json({
     message: alreadyShared ? 'Doctor already has access to this document' : 'Document shared with doctor',
-    document: serializeMedicalDocument(populatedDocument),
+    document: serializeMedicalDocument(populatedDocument, user.role),
   });
 });

@@ -1,4 +1,4 @@
-import type { MedicalDocument } from './document';
+import type { LabMedicalDocument } from './document';
 
 export type LabLinkStatus = 'PENDING' | 'ACTIVE' | 'REJECTED' | 'REVOKED';
 
@@ -57,5 +57,5 @@ export interface LabLinksResponse {
 }
 
 export interface LabReportResponse {
-  document: MedicalDocument;
+  document: LabMedicalDocument;
 }

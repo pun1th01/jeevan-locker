@@ -4,10 +4,10 @@ import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import type { MedicalDocument } from '../../types/document';
+import type { AnyMedicalDocument, MedicalDocument } from '../../types/document';
 
-interface DocumentListProps {
-  documents: MedicalDocument[];
+interface DocumentListProps<T extends AnyMedicalDocument> {
+  documents: T[];
   /** Active access paths per document, including direct shares, approved consents, and live emergency grants. */
   accessCountByDocument?: Record<string, number>;
   isLoading: boolean;
@@ -17,8 +17,8 @@ interface DocumentListProps {
   highlightedDocumentId?: string | null;
   openingDocumentId?: string | null;
   onOpenDocument?: (documentId: string) => void;
-  onPreviewDocument?: (document: MedicalDocument) => void;
-  renderActions?: (document: MedicalDocument) => ReactNode;
+  onPreviewDocument?: (document: T) => void;
+  renderActions?: (document: T) => ReactNode;
 }
 
 const formatDate = (value: string) =>
@@ -43,7 +43,7 @@ const FileIcon = ({ mimeType }: { mimeType: MedicalDocument['mimeType'] }) =>
     <Image className="h-5 w-5 text-cyan-200" />
   );
 
-export default function DocumentList({
+export default function DocumentList<T extends AnyMedicalDocument>({
   documents,
   accessCountByDocument,
   isLoading,
@@ -55,7 +55,7 @@ export default function DocumentList({
   onOpenDocument,
   onPreviewDocument,
   renderActions,
-}: DocumentListProps) {
+}: DocumentListProps<T>) {
   const [searchQuery, setSearchQuery] = useState('');
   const [fileType, setFileType] = useState('All');
   const [sortOrder, setSortOrder] = useState('Newest');
@@ -246,10 +246,12 @@ export default function DocumentList({
                     <UserRound className="h-3.5 w-3.5" />
                     {document.uploadedBy.name}
                   </span>
-                  <span className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] px-2 py-1">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    {accessCountByDocument?.[document.id] ?? document.sharedWithDoctors.length} shared
-                  </span>
+                  {'sharedWithDoctors' in document ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] px-2 py-1">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      {accessCountByDocument?.[document.id] ?? document.sharedWithDoctors.length} shared
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
