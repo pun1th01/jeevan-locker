@@ -150,6 +150,19 @@ Specification: the Task 7 design as documented in [EVENTS.md](EVENTS.md) (`emerg
 | C38 | A lapsed grant is expired exactly once, whoever gets there first — and never over a revocation. | 30 rounds × 7 concurrent expirers (the global batch, the full sweep, the doctor-wide and document-scoped lazy sweeps, and three real requests from the doctor): one `EMERGENCY_ACCESS_EXPIRED` row per round, marked `system`, naming the doctor. 30 rounds of a patient revoking a lapsed grant while it expires: exactly one terminal state and one audit row each time. The interleaving no loop can force — the expiry reads `ACTIVE`, the revoke lands, then the expiry writes — is forced deterministically (see §2, *the one intercepted call*): the revocation stands. | `breakglass.test.ts` → *C38* |
 | C39 | The scheduled job ends a lapsed grant without any request from the doctor, and a backlog larger than one batch cannot be starved. | With the job running and no doctor activity, the grant becomes `EXPIRED`, with one audit row marked `system` that names the patient and doctor, and it appears in the patient's expired list. Twelve lapsed grants at batch size 5: one batch expires exactly the five oldest; one sweep drains the other seven, one row per grant. | `breakglass.test.ts` → *C39* |
 
+### 3.5 Hardening — suite 5 (`test/hardening/`, 50 tests)
+
+Specification: [API_LAB.md](API_LAB.md) §3 (upload checks) and §6 (rate limits), [API_ADMIN.md](API_ADMIN.md) §3 (the lookup limiter runs before the verification gate), [ENCRYPTION.md](ENCRYPTION.md) §7 (no plaintext left behind), `server/.env.example` and `config/env.ts` (`TRUST_PROXY`). A refusal counts as a refusal only if it leaves nothing behind: no file of any kind in the uploads directory and no row.
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C40 | An upload is stored only if its bytes are what it claims to be; a mismatch is refused and leaves nothing behind. | On both the patient upload and the lab report route: PNG bytes declared as PDF, PDF as PNG, JPEG as PNG, plain text as PDF, a Windows executable (`MZ`) as PDF, HTML with a script as JPEG, a PDF signature one byte from the start, and an empty file. Each gets `400 File content does not match its declared type`, no file and no row. | `uploads.test.ts` → *C40* |
+| C41 | Only PDF, JPEG and PNG under the size limit, one file per request, are accepted, and anything else is refused with nothing kept. | On both routes: `text/html`, `image/svg+xml`, `application/x-msdownload`, `application/octet-stream` and `image/gif` are refused as not whitelisted. One byte over 5 MB is `413` and the partial file is removed. Two files in one request are refused. One byte under 5 MB is accepted. | `uploads.test.ts` → *C41* |
+| C42 | Login allows ten attempts per client address per 15 minutes, counted before the password is checked, and a client cannot reset the count by inventing an address. | Ten wrong passwords get 401. The 11th attempt, with the *right* password, gets `429` with the documented message and draft-8 `RateLimit` headers, and no login is recorded. With `TRUST_PROXY` unset, three more attempts with invented `X-Forwarded-For` addresses are still `429`. | `limits.test.ts` → *C42* |
+| C43 | Registration allows five accounts per client address per hour. | Five registrations get 201; the sixth gets `429` and creates nobody. | `limits.test.ts` → *C43* |
+| C44 | Patient lookups are limited to thirty per account per 15 minutes, counted before the verification gate, so an unverified account cannot probe for free. A lab's link requests are limited the same way. | An unverified doctor gets thirty `403`s (verification message) and then `429`; a verified doctor on the same address is unaffected. A lab gets thirty `404` probes and then `429`; another lab is unaffected. | `limits.test.ts` → *C44* |
+| C45 | `TRUST_PROXY` decides which address is audited and rate-limited. Unset, `X-Forwarded-For` is ignored; with a hop count, only the proxy-supplied address is believed; "trust everyone" is refused at startup. | The real config parses `""`, `false`, `0` → off; `1`, `2` → hop counts; `loopback` and a CIDR list pass through; `true` in any case fails to load. Unset: a read with `X-Forwarded-For` is audited with the socket address. One hop: the audited address is the one the proxy appended, even when the client prepended its own, and the login limit is kept per real client. `loopback`: a local proxy's header is believed. A server *started* with `TRUST_PROXY=1` applies it (`trustProxyBoot.test.ts` imports the app only after setting it). | `limits.test.ts` → *C45*; `trustProxyBoot.test.ts` |
+
 ---
 
 ## 4. Evidence the tests can fail
@@ -183,6 +196,16 @@ A test that has never been seen failing proves little. Each change below was mad
 | The lock is not released when work throws | code | C36, the lock's release-on-throw test (the next holder waited forever) |
 | The sweep drains only one batch | code | C39, the backlog |
 | The expiry job never ticks | code | C39, the job without a doctor request |
+| Remove the magic-byte check | code | C40: every mismatch case on both routes |
+| Refuse a mismatch but keep the plaintext temp | code | C40: every mismatch case (a file was left behind) |
+| Add `image/svg+xml` to the whitelist | code | C41: the SVG case on both routes |
+| Double the size limit | code | C41: the over-5-MB case on both routes |
+| Login limit 10 → 100 | code | C42, and C45's per-client login limit |
+| Key the IP limiters on the raw `X-Forwarded-For` header | code | C42: the invented-address attempts were let through |
+| Put the lookup limiter after the verification gate | code | C44: the unverified doctor was refused forever but never throttled |
+| Key the lookup limiter by address instead of account | code | C44: the verified doctor on the same address was throttled |
+| Accept `TRUST_PROXY=true` | code | C45: all three spellings |
+| `app.ts` ignores `TRUST_PROXY` | code | C45, `trustProxyBoot.test.ts` only. The other trust-proxy tests set the value themselves, which is why that file exists. |
 | Swap two keys of the GRANTED preimage | code | C26 (the test's own §2 preimage no longer matches); `verify:anchors` too |
 | Verdict ignores the chain (`verified = matchesRecord`) | code | C28: the not-yet-anchored row and the unreachable-node case |
 | Differing fields never reported | code | C29: all seven edit cases |
@@ -209,6 +232,7 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 - **Carry-forward: several server instances need database-enforced grant slots (option B).** The cap relies on the in-process lock, the same single-process assumption as the chain nonce mutex and the rate-limit store. With more than one instance, each live grant would need to take a numbered slot below the cap under a unique `{doctorId, slot}` index for `ACTIVE` grants.
 - **Deployment note for the new index:** a database that already holds duplicate live grants (reachable only through the old race) cannot build `one_active_grant_per_doctor_document` until they are expired or revoked. A fresh database is unaffected.
 - **Fixed: a chain outage during upload was reported as `500 Internal server error`, with a stack trace outside production.** The cleanup was already right. An unreachable node (connection refused, reset, timeout, DNS failure, or ethers `NETWORK_ERROR`/`TIMEOUT`) is now a `ChainUnavailableError`. It is answered centrally as `503 The blockchain network is unavailable right now. Please try again shortly.` with no stack, on patient uploads, lab-report uploads and `/integrity`. A transaction that reaches the chain and *reverts* stays a real error. The "chain not configured" 503 lost its stack trace the same way.
+- **Open: a file of exactly 5 MB is refused.** The documents say "max 5 MB", which reads as inclusive, but the multer limit rejects a file that *reaches* 5,242,880 bytes (`413`). One byte less is accepted. Either the documents should say "under 5 MB" or the limit should be one byte higher. It is harmless either way. C41 asserts the two unambiguous edges and deliberately neither side of this one.
 
 ---
 
@@ -216,17 +240,35 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 
 - The React client. The suite is server-side; the UI was verified by hand in the browser for each feature.
 - Timing side channels (e.g. whether the lookup 404 takes measurably longer for a non-patient email). Responses are compared for identical status and body only.
+- Rate-limit windows running out. The suite shows that each limit engages at the documented count; it does not wait 15 minutes or an hour to watch a window reset. That is express-rate-limit's own behaviour, not something this code implements.
 - Multi-process deployment. Three mechanisms are per process by design, and documented as such where they live: the in-memory rate-limit store, the chain send mutex (wallet nonce) and the per-doctor break-glass lock that enforces the grant cap. A clustered deployment would need a shared store, a nonce manager and database-enforced grant slots (see §5). The one-live-grant-per-document rule does not depend on the process count: the database enforces it, and C36 proves that with lock-free concurrent inserts.
 
 ---
 
 ## 7. Timings
 
-Measured on the development machine (4 cores, repository on OneDrive), warm:
+Measured on the development machine (4 cores, 14 GB, repository on OneDrive), warm, three workers:
 
 | Step | Time |
 |---|---|
-| Global setup (compile check, chain + mongod, deploy) | 6.7–8.1 s |
-| Importing the app into one worker | ~3.5 s (≈14 s cold) |
-| `npm test`: harness + suite 1, 4 files, 808 tests, 3 workers | 37–44 s (≈41 s wall clock) |
-| `documents.test.ts` alone (the 504-cell read matrix) | ≈33 s |
+| `npm test` — 12 files, 934 tests | **53–57 s** (56–60 s wall clock) |
+| Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
+| Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
+| First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
+
+Time spent running each file's tests (excluding its app import):
+
+| File | Tests | Time |
+|---|---|---|
+| `access/documents.test.ts` (the 504-cell read matrix) | 547 | 15.7 s |
+| `anchoring/outage.test.ts` (kills and restarts its own chain) | 1 | 11.4 s |
+| `breakglass/breakglass.test.ts` (two 30-round races) | 17 | 11.2 s |
+| `anchoring/anchors.test.ts` | 20 | 11.0 s |
+| `encryption/vault.test.ts` | 30 | 9.8 s |
+| `hardening/limits.test.ts` | 18 | 5.1 s |
+| `access/workflows.test.ts` | 39 | 3.9 s |
+| `access/inventory.test.ts` | 215 | 3.1 s |
+| `hardening/trustProxyBoot.test.ts` | 1 | 2.9 s |
+| `hardening/uploads.test.ts` | 31 | 1.6 s |
+| `breakglass/grantInsert.test.ts` | 7 | 1.2 s |
+| `harness.test.ts` | 8 | 0.5 s |
