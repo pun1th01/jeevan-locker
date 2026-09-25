@@ -77,3 +77,29 @@ export const getRegisteredDocumentHash = async (documentId: string): Promise<Blo
 
   return { hash: hash.slice(2).toLowerCase(), timestamp: new Date(Number(timestamp) * 1000), uploader };
 };
+
+/**
+ * Where a document id was registered, recovered from its DocumentRegistered event (the id is an indexed topic). For a
+ * caller that finds the id already on-chain but has lost the transaction details — e.g. the dev seed after its
+ * in-memory database restarted while the chain kept running.
+ */
+export const findDocumentRegistration = async (documentId: string): Promise<DocumentRegistration | null> => {
+  const { contract } = getRegistry();
+
+  try {
+    const events = await contract.queryFilter(contract.filters.DocumentRegistered(documentId), 0, 'latest');
+    const first = events[0];
+
+    if (!first || !('args' in first)) {
+      return null;
+    }
+
+    return {
+      transactionHash: first.transactionHash,
+      blockNumber: first.blockNumber,
+      registeredAt: new Date(Number(first.args.timestamp) * 1000),
+    };
+  } catch (error) {
+    throw toChainError(error);
+  }
+};

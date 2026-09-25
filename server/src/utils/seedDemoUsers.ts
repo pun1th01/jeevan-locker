@@ -9,8 +9,9 @@ import { LabLink } from '../models/LabLink';
 import { MedicalDocument, type IMedicalDocument, type MedicalDocumentMimeType } from '../models/MedicalDocument';
 import { User, type IUser } from '../models/User';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
+import { ChainNotConfiguredError, ChainUnavailableError } from '../services/chain.service';
 import { ENCRYPTED_FILE_SUFFIX, encryptFileToVault } from '../services/documentCrypto.service';
-import { registerDocumentHash } from '../services/documentRegistry.service';
+import { findDocumentRegistration, getRegisteredDocumentHash, registerDocumentHash, type DocumentRegistration } from '../services/documentRegistry.service';
 import type { UserRole } from '../types/user.types';
 import { SHA_256 } from './documentHash.util';
 import { computeTestValueFlag } from './testValues.util';
@@ -861,9 +862,8 @@ const ensureDemoDocument = async (
 
   // Demo files are encrypted at rest exactly like uploads. `encrypted.sha256` is the SHA-256 of the
   // PLAINTEXT (computed while encrypting) and is what `documentHash` records.
-  // NOTE FOR ON-CHAIN SEED REGISTRATION (Shastri): register THIS value — the plaintext hash — for the
-  // document id `documentId`. Never hash the `.enc` file on disk; integrity verification decrypts and
-  // re-hashes the plaintext, so a ciphertext hash on-chain would fail every check.
+  // `ensureDemoDocumentOnChain` registers THIS value — the plaintext hash — for `documentId`. Never hash the `.enc`
+  // file on disk: integrity verification decrypts and re-hashes the plaintext.
   const encrypted = await encryptFileToVault({
     sourcePath: plaintextPath,
     targetDirectory: UPLOAD_DIRECTORY,
@@ -885,9 +885,6 @@ const ensureDemoDocument = async (
     throw new Error(`Missing seeded lab account: ${documentSeed.uploadedByLabEmail}`);
   }
 
-  console.log(`[Dev] Registering seeded document hash for ${documentSeed.title} on blockchain...`);
-  const registration = await registerDocumentHash(documentId.toString(), encrypted.sha256);
-
   const documentPayload = {
     title: documentSeed.title,
     originalFileName: documentSeed.originalFileName,
@@ -900,9 +897,6 @@ const ensureDemoDocument = async (
     hashAlgorithm: SHA_256,
     encryption: encrypted.encryption,
     plaintextSize: encrypted.plaintextSize,
-    blockchainDocumentId: documentId.toString(),
-    blockchainTxHash: registration.transactionHash,
-    blockchainRegisteredAt: registration.registeredAt,
     ...(uploadedByLab ? { uploadedByLab } : {}),
     ...(documentSeed.labName ? { labName: documentSeed.labName } : {}),
     ...(documentSeed.testName ? { testName: documentSeed.testName } : {}),
@@ -976,6 +970,74 @@ const ensureDemoAuditLog = async (
     timestamp: auditSeed.timestamp,
     ipAddress: auditSeed.ipAddress,
   });
+};
+
+type OnChainOutcome = 'registered' | 'already-registered' | 'conflict' | 'unavailable';
+
+const recordRegistration = (documentId: IMedicalDocument['_id'], registration: DocumentRegistration) =>
+  MedicalDocument.updateOne(
+    { _id: documentId },
+    {
+      $set: {
+        blockchainDocumentId: documentId.toString(),
+        blockchainTxHash: registration.transactionHash,
+        blockchainRegisteredAt: registration.registeredAt,
+      },
+    },
+    { timestamps: false }
+  );
+
+/**
+ * Registers a seeded document's PLAINTEXT hash on-chain — exactly what an upload does — so /integrity verifies it.
+ * Seeded ids are reused across re-seeds of a persistent database, and a dev chain can outlive the API process, so the
+ * id may already be registered. The registry is write-once, so it is read first:
+ *   - already registered with this hash  -> nothing is sent; the row's chain fields are (re)filled from the event log
+ *   - already registered with ANOTHER hash -> never overwritten: a loud error names the document, the row is left
+ *                                            unregistered (so /integrity says so, rather than reporting tampering)
+ *   - not registered                      -> registerDocumentHash (serialized with every other send, event-guarded)
+ * Chain errors other than "unreachable / not configured" propagate: they are bugs, not demo-environment states.
+ */
+const ensureDemoDocumentOnChain = async (document: IMedicalDocument): Promise<OnChainOutcome> => {
+  const documentId = document._id.toString();
+  const plaintextHash = document.documentHash;
+
+  if (!plaintextHash) {
+    throw new Error(`Demo document "${document.title}" (${documentId}) has no documentHash to register`);
+  }
+
+  try {
+    const onChain = await getRegisteredDocumentHash(documentId);
+
+    if (onChain && onChain.hash !== plaintextHash) {
+      console.error(
+        `[Dev] SEED CONFLICT: demo document "${document.title}" (${documentId}) is already registered on-chain with hash ${onChain.hash}, ` +
+          `but its file hashes to ${plaintextHash}. The registry is write-once, so it is NOT overwritten; the document is left unregistered.`
+      );
+      await MedicalDocument.updateOne(
+        { _id: document._id },
+        { $unset: { blockchainDocumentId: 1, blockchainTxHash: 1, blockchainRegisteredAt: 1 } },
+        { timestamps: false }
+      );
+      return 'conflict';
+    }
+
+    if (onChain) {
+      if (document.blockchainDocumentId !== documentId || !document.blockchainTxHash) {
+        const registration = await findDocumentRegistration(documentId);
+        if (!registration) throw new Error(`Document ${documentId} is registered on-chain but its DocumentRegistered event was not found`);
+        await recordRegistration(document._id, registration);
+      }
+      return 'already-registered';
+    }
+
+    await recordRegistration(document._id, await registerDocumentHash(documentId, plaintextHash));
+    return 'registered';
+  } catch (error) {
+    if (error instanceof ChainUnavailableError || error instanceof ChainNotConfiguredError) {
+      return 'unavailable';
+    }
+    throw error;
+  }
 };
 
 /**
@@ -1053,6 +1115,21 @@ export const seedDemoUsers = async (): Promise<void> => {
     documentByKey.set(documentSeed.key, document);
   }
 
+  // On-chain registration. The first "unreachable / not configured" stops the attempts — every later one would fail
+  // the same way — and boot carries on: the documents still work, only /integrity answers 409 for them.
+  const onChain: Record<OnChainOutcome, number> = { registered: 0, 'already-registered': 0, conflict: 0, unavailable: 0 };
+  for (const document of documentByKey.values()) {
+    const outcome = onChain.unavailable > 0 ? 'unavailable' : await ensureDemoDocumentOnChain(document);
+    onChain[outcome] += 1;
+  }
+
+  if (onChain.unavailable > 0) {
+    console.warn(
+      `[Dev] Blockchain unavailable or not configured: ${onChain.unavailable} demo document(s) left UNREGISTERED on-chain. ` +
+        `Their /integrity check will answer 409 until the seed runs again with the chain up (restart the API).`
+    );
+  }
+
   for (const linkSeed of demoLabLinks) {
     await ensureDemoLabLink(linkSeed, userByEmail);
   }
@@ -1063,6 +1140,10 @@ export const seedDemoUsers = async (): Promise<void> => {
 
   console.log(
     `[Dev] Demo environment ready: ${demoAccounts.length} accounts, ${demoDocuments.length} documents, ${demoLabLinks.length} active lab links, ${demoAudits.length} audit events.`
+  );
+  console.log(
+    `[Dev] Demo documents on-chain: ${onChain.registered} registered now, ${onChain['already-registered']} already registered, ` +
+      `${onChain.conflict} conflicting, ${onChain.unavailable} unregistered (chain unavailable).`
   );
 };
 
