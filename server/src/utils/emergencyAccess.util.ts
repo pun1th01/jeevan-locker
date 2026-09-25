@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
-import { EmergencyAccess } from '../models/EmergencyAccess';
+import { EmergencyAccess, type IEmergencyAccess } from '../models/EmergencyAccess';
 import { createAuditLog } from './audit.util';
+import { createKeyedMutex } from './keyedMutex.util';
 
 export const DEFAULT_ACCESS_DURATION_MINUTES = 15;
 export const DEFAULT_MAX_ACTIVE_EMERGENCY_GRANTS = 5;
@@ -153,4 +154,64 @@ export const findActiveEmergencyAccess = async (doctorId: string | Types.ObjectI
     status: 'ACTIVE',
     expiresAt: { $gt: new Date() },
   }).sort({ expiresAt: -1 });
+};
+
+// ---------- creating a grant: one live grant per doctor per document, and never past the cap ----------
+
+const grantLock = createKeyedMutex();
+
+/**
+ * Runs a doctor's break-glass decision (sweep, "already active" check, cap count, insert) with no other break-glass
+ * request from the SAME doctor in flight, so two concurrent requests cannot both pass the cap check before either has
+ * inserted. Keyed per doctor: one doctor's requests never wait for another's. Keep `work` to the decision and the
+ * insert; audit, notification and anchor enqueue belong after the lock is released.
+ *
+ * In-process only — the same single-process deployment assumption as sendSerialized (the chain nonce) and the
+ * in-memory rate-limit store. Several server instances would need the cap enforced by the database instead
+ * (per-doctor slots under a unique index; see docs/TESTING.md, findings). The one-live-grant-per-document rule does
+ * not depend on this lock: the partial unique index enforces it for any number of processes.
+ */
+export const withDoctorGrantLock = <T>(doctorId: string, work: () => Promise<T>): Promise<T> => grantLock(doctorId, work);
+
+export interface NewGrantFields {
+  doctorId: Types.ObjectId | string;
+  patientId: Types.ObjectId;
+  documentId: Types.ObjectId;
+  reason: string;
+  expiresAt: Date;
+  afterRevocation?: true;
+  followsRevokedGrantId?: Types.ObjectId;
+}
+
+export type ActiveGrantInsertResult = { created: true; grant: IEmergencyAccess } | { created: false; grant: IEmergencyAccess };
+
+const isDuplicateKeyError = (error: unknown) =>
+  typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 11000;
+
+/**
+ * Inserts a new ACTIVE grant under the partial unique index {doctorId, documentId | status ACTIVE}. On a conflict the
+ * conflicting row is re-read:
+ *   - still live (expiresAt > now) -> it is returned, exactly like the "already active" answer;
+ *   - lapsed but not yet swept     -> it is expired through the same guarded transition as every other expiry (so
+ *                                     its EMERGENCY_ACCESS_EXPIRED row is written exactly once), and the insert is
+ *                                     retried ONCE. A second conflict is an error, never a loop.
+ */
+export const insertActiveGrant = async (fields: NewGrantFields): Promise<ActiveGrantInsertResult> => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return { created: true, grant: await EmergencyAccess.create({ ...fields, status: 'ACTIVE' }) };
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+
+      const conflicting = await EmergencyAccess.findOne({ doctorId: fields.doctorId, documentId: fields.documentId, status: 'ACTIVE' });
+
+      if (conflicting && conflicting.expiresAt > new Date()) {
+        return { created: false, grant: conflicting };
+      }
+
+      if (attempt >= 1) throw error;
+
+      await expireEmergencyAccesses(fields.doctorId, fields.documentId);
+    }
+  }
 };

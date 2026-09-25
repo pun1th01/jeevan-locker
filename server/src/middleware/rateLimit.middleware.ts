@@ -4,7 +4,9 @@ import type { AuthenticatedRequest } from '../types/auth.types';
 
 /**
  * All limiters key on req.ip, which is only trustworthy because `trust proxy` is configured explicitly
- * (see config/env.ts). The in-memory store resets on restart; fine for a single-process deployment.
+ * (see config/env.ts). The in-memory store resets on restart; fine for a single-process deployment — the same
+ * assumption as sendSerialized (chain.service.ts, the wallet nonce) and the per-doctor break-glass lock
+ * (withDoctorGrantLock, emergencyAccess.util.ts). Several instances would need a shared store (e.g. Redis).
  */
 
 const MINUTE_MS = 60 * 1000;

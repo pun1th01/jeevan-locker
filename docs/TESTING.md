@@ -175,6 +175,13 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 
 - *Resolved:* an unknown role used to be refused by a thrown error: a 500, with a stack trace outside production. Nothing was served, but a thrown error is the wrong way to fail in the access path. The catch-all now denies explicitly (a 403) and keeps the compile-time `never` check. C9 was tightened from "not 2xx" to the exact 403.
 - **Object-level refusals confirm that an id exists.** Another patient acting on a consent, grant or lab link gets 403, while an unknown id gets 404. That is the documented behaviour (API_LAB.md §3 for lab links). It lets a signed-in patient probe whether an ObjectId belongs to *some* record, never what that record contains.
+- **Fixed: concurrent break-glass requests bypassed both grant limits.** Suite 4 found it. With the default cap of 5, twelve simultaneous requests from one doctor produced 9 live grants; eight simultaneous requests on one document produced 6 live grants for the same doctor, each with its own audit row, anchor and patient notification. Nothing was silent, but the cap is the control against one account opening many records at once. The cause was check-then-create with nothing making the pair atomic. The fix (option A):
+  - a partial unique index allowing one `ACTIVE` grant per doctor per document, database-enforced for any number of server processes, with lapsed-but-unswept rows expired and the insert retried once;
+  - a per-doctor in-process lock around the sweep, check, count and insert.
+
+  C36 now passes unchanged, and each half was shown to be necessary (§4).
+- **Carry-forward: several server instances need database-enforced grant slots (option B).** The cap relies on the in-process lock, the same single-process assumption as the chain nonce mutex and the rate-limit store. With more than one instance, each live grant would need to take a numbered slot below the cap under a unique `{doctorId, slot}` index for `ACTIVE` grants.
+- **Deployment note for the new index:** a database that already holds duplicate live grants (reachable only through the old race) cannot build `one_active_grant_per_doctor_document` until they are expired or revoked. A fresh database is unaffected.
 - **Open: a chain outage during upload is reported as `500 Internal server error`, not `503`.** The cleanup is exactly as documented (C25): no file, no row. But the status is a generic 500, and outside production the body carries the stack trace, including the RPC connection error. The "chain not configured" path already answers `503`; an unreachable chain should arguably do the same. Not fixed in Task 8.
 
 ---
@@ -183,7 +190,7 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 
 - The React client. The suite is server-side; the UI was verified by hand in the browser for each feature.
 - Timing side channels (e.g. whether the lookup 404 takes measurably longer for a non-patient email). Responses are compared for identical status and body only.
-- Multi-process deployment. Rate limits use the in-memory store and the send mutex is per process, exactly as documented; a clustered deployment would need a shared store and a nonce manager.
+- Multi-process deployment. Three mechanisms are per process by design, and documented as such where they live: the in-memory rate-limit store, the chain send mutex (wallet nonce) and the per-doctor break-glass lock that enforces the grant cap. A clustered deployment would need a shared store, a nonce manager and database-enforced grant slots (see §5). The one-live-grant-per-document rule does not depend on the process count: the database enforces it, and C36 proves that with lock-free concurrent inserts.
 
 ---
 

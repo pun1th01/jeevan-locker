@@ -91,6 +91,13 @@ const emergencyAccessSchema = new Schema<IEmergencyAccess>(
 );
 
 emergencyAccessSchema.index({ doctorId: 1, documentId: 1, status: 1, expiresAt: 1 });
+// At most ONE live grant per doctor per document, enforced by the database — across server processes too, which
+// the per-doctor lock in the grant handler cannot promise. A partial filter cannot be time-relative, so a grant that
+// has lapsed but is not yet swept still holds the slot; insertActiveGrant (emergencyAccess.util.ts) handles that.
+emergencyAccessSchema.index(
+  { doctorId: 1, documentId: 1 },
+  { unique: true, partialFilterExpression: { status: 'ACTIVE' }, name: 'one_active_grant_per_doctor_document' }
+);
 // The patient's list, and the scheduled expiry sweep over every lapsed ACTIVE grant.
 emergencyAccessSchema.index({ patientId: 1, status: 1, createdAt: -1 });
 emergencyAccessSchema.index({ status: 1, expiresAt: 1 });

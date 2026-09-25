@@ -17,8 +17,10 @@ import {
   expireEmergencyAccesses,
   findActiveEmergencyAccess,
   formatEmergencyDuration,
+  insertActiveGrant,
   maxActiveEmergencyGrants,
   regrantWindowMs,
+  withDoctorGrantLock,
 } from '../utils/emergencyAccess.util';
 
 interface EmergencyAccessResponse {
@@ -140,49 +142,66 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
     return;
   }
 
-  const activeEmergencyAccess = await findActiveEmergencyAccess(doctor.id, document._id);
+  // The decision and the insert run under a per-doctor lock: without it, concurrent requests all pass the cap
+  // check before any of them has inserted (proved by test/breakglass, C36). Only this part is locked; the audit
+  // row, anchor enqueue and notification below happen after release.
+  const outcome = await withDoctorGrantLock(doctor.id, async () => {
+    const activeEmergencyAccess = await findActiveEmergencyAccess(doctor.id, document._id);
 
-  if (activeEmergencyAccess) {
+    if (activeEmergencyAccess) {
+      return { kind: 'existing', grant: activeEmergencyAccess } as const;
+    }
+
+    // findActiveEmergencyAccess above only sweeps THIS document, so sweep the doctor's other grants too:
+    // the count already ignores lapsed rows (it filters on expiresAt), but this keeps their EXPIRED audit
+    // rows timely even between ticks of the scheduled expiry job.
+    await expireEmergencyAccesses(doctor.id);
+    const activeCount = await countActiveEmergencyAccesses(doctor.id);
+    const maxActive = maxActiveEmergencyGrants();
+
+    if (activeCount >= maxActive) {
+      return { kind: 'capped', activeCount, maxActive } as const;
+    }
+
+    // A patient revoking this doctor on this document must mean something: a return inside the window is
+    // recorded on the grant, in the audit metadata, in the notification, and in the patient's list.
+    const recentlyRevoked = await EmergencyAccess.findOne({
+      doctorId: doctor.id,
+      documentId: document._id,
+      status: 'REVOKED',
+      revokedAt: { $gte: new Date(Date.now() - regrantWindowMs()) },
+    }).sort({ revokedAt: -1 });
+
+    const inserted = await insertActiveGrant({
+      doctorId: doctor.id,
+      patientId: patient._id,
+      documentId: document._id,
+      reason,
+      expiresAt: new Date(Date.now() + emergencyAccessDurationMs()),
+      ...(recentlyRevoked ? { afterRevocation: true, followsRevokedGrantId: recentlyRevoked._id } : {}),
+    });
+
+    // Another server process got there first: its live grant is the answer, exactly as if it had been found above.
+    return inserted.created ? ({ kind: 'created', grant: inserted.grant, recentlyRevoked } as const) : ({ kind: 'existing', grant: inserted.grant } as const);
+  });
+
+  if (outcome.kind === 'existing') {
     res.json({
       message: 'Emergency access is already active for this document',
-      emergencyAccess: serializeEmergencyAccess(activeEmergencyAccess),
+      emergencyAccess: serializeEmergencyAccess(outcome.grant),
     });
     return;
   }
 
-  // findActiveEmergencyAccess above only sweeps THIS document, so sweep the doctor's other grants too:
-  // the count already ignores lapsed rows (it filters on expiresAt), but this keeps their EXPIRED audit
-  // rows timely even between ticks of the scheduled expiry job.
-  await expireEmergencyAccesses(doctor.id);
-  const activeCount = await countActiveEmergencyAccesses(doctor.id);
-  const maxActive = maxActiveEmergencyGrants();
-
-  if (activeCount >= maxActive) {
+  if (outcome.kind === 'capped') {
     res.status(409).json({
-      message: `You already have ${activeCount} active emergency accesses (limit ${maxActive}). Revoke one or wait for it to expire before starting another.`,
+      message: `You already have ${outcome.activeCount} active emergency accesses (limit ${outcome.maxActive}). Revoke one or wait for it to expire before starting another.`,
     });
     return;
   }
 
-  // A patient revoking this doctor on this document must mean something: a return inside the window is
-  // recorded on the grant, in the audit metadata, in the notification, and in the patient's list.
-  const recentlyRevoked = await EmergencyAccess.findOne({
-    doctorId: doctor.id,
-    documentId: document._id,
-    status: 'REVOKED',
-    revokedAt: { $gte: new Date(Date.now() - regrantWindowMs()) },
-  }).sort({ revokedAt: -1 });
-
-  const expiresAt = new Date(Date.now() + emergencyAccessDurationMs());
-  const emergencyAccess = await EmergencyAccess.create({
-    doctorId: doctor.id,
-    patientId: patient._id,
-    documentId: document._id,
-    reason,
-    status: 'ACTIVE',
-    expiresAt,
-    ...(recentlyRevoked ? { afterRevocation: true, followsRevokedGrantId: recentlyRevoked._id } : {}),
-  });
+  const { grant: emergencyAccess, recentlyRevoked } = outcome;
+  const { expiresAt } = emergencyAccess;
 
   await createAuditLog({
     userId: doctor.id,

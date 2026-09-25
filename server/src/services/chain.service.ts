@@ -8,7 +8,9 @@ import { Contract, Interface, JsonRpcProvider, Wallet, isAddress, type LogDescri
  *     the nonce per transaction; two concurrent sends from the same wallet race for it and one fails
  *     with "nonce too low" / "replacement underpriced". Uploads and audit anchors share this wallet.
  *     The provider is also created with its RPC cache disabled (see getSigner) — the two together are
- *     what make back-to-back sends safe.
+ *     what make back-to-back sends safe. In-process, so one server process per wallet: the same
+ *     single-process assumption as the in-memory rate-limit store (rateLimit.middleware.ts) and the
+ *     per-doctor break-glass lock (withDoctorGrantLock, emergencyAccess.util.ts).
  *   - verifyChainContractsAtBoot(): getCode() on every configured address, so a bare address that
  *     would silently accept transactions (and register nothing) is refused before the server listens
  *   - expectContractEvent(): the per-send guard — a transaction only counts if the receipt succeeded
