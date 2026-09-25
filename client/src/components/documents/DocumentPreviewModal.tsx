@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertCircle, Download, FileText, Image, Loader2, ShieldCheck, X } from 'lucide-react';
+import { AlertCircle, Download, FileText, FlaskConical, Image, Loader2, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
@@ -213,6 +213,119 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
               <div className="mt-3 flex items-start gap-2 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-3 text-sm text-rose-100">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{integrityError}</span>
+              </div>
+            ) : null}
+
+            {document?.uploadedByLab ? (
+              <div className="mt-3 rounded-lg border border-slate-700/50 bg-slate-900/40 p-4">
+                <div className="flex items-center gap-2 font-semibold">
+                  <FlaskConical className="h-5 w-5 text-cyan-300" />
+                  {integrityResult?.verified === true ? (
+                    <span className="flex items-center gap-1.5 text-emerald-300">
+                      <ShieldCheck className="h-4 w-4" />
+                      Verified Lab Report
+                    </span>
+                  ) : (
+                    <span className="text-slate-200">Lab Report Details</span>
+                  )}
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                  {document.uploadedByLab.organisation ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Issuing Organisation</span>
+                      <span className="text-slate-200">{document.uploadedByLab.organisation}</span>
+                    </div>
+                  ) : null}
+                  {document.labName ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Lab Name</span>
+                      <span className="text-slate-200">{document.labName}</span>
+                    </div>
+                  ) : null}
+                  {document.testName ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Test Name</span>
+                      <span className="text-slate-200">{document.testName}</span>
+                    </div>
+                  ) : null}
+                  {document.nablCertNumber ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">NABL Certificate</span>
+                      <span className="text-slate-200">{document.nablCertNumber}</span>
+                    </div>
+                  ) : null}
+                  {document.authorizingDoctorName ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Authorizing Doctor</span>
+                      <span className="text-slate-200">{document.authorizingDoctorName}</span>
+                    </div>
+                  ) : null}
+                  {document.hospitalName ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Hospital Name</span>
+                      <span className="text-slate-200">{document.hospitalName}</span>
+                    </div>
+                  ) : null}
+                  {document.reportDate ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Report Date</span>
+                      <span className="text-slate-200">
+                        {new Intl.DateTimeFormat('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        }).format(new Date(document.reportDate))}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {document?.testValues && document.testValues.length > 0 ? (
+              <div className="mt-3 overflow-hidden rounded-lg border border-slate-700/50 bg-slate-900/40">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-800/50 text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Test</th>
+                      <th className="px-4 py-3 font-medium">Result</th>
+                      <th className="px-4 py-3 font-medium">Reference</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {document.testValues.map((tv, idx) => {
+                      let statusColor = 'bg-slate-800 text-slate-300';
+                      if (tv.flag === 'critical') statusColor = 'bg-rose-500/20 text-rose-200';
+                      else if (tv.flag === 'high' || tv.flag === 'low') statusColor = 'bg-amber-500/20 text-amber-200';
+
+                      let refDisplay = '-';
+                      if (tv.refLow !== undefined && tv.refHigh !== undefined) {
+                        refDisplay = `${tv.refLow} - ${tv.refHigh}`;
+                      } else if (tv.refLow !== undefined) {
+                        refDisplay = `> ${tv.refLow}`;
+                      } else if (tv.refHigh !== undefined) {
+                        refDisplay = `< ${tv.refHigh}`;
+                      }
+
+                      return (
+                        <tr key={idx}>
+                          <td className="px-4 py-3 font-medium text-slate-200">{tv.name}</td>
+                          <td className="px-4 py-3">
+                            <span className="font-semibold text-white">{tv.value}</span>
+                            <span className="ml-1 text-xs text-slate-400">{tv.unit}</span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-400">{refDisplay}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold capitalize ${statusColor}`}>
+                              {tv.flag}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             ) : null}
 
