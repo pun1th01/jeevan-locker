@@ -55,6 +55,23 @@ const serializeConsent = (consent: IConsentGrant) => {
   };
 };
 
+const CONSENT_REFERENCES = [
+  { path: 'patientId', select: 'name role' },
+  { path: 'doctorId', select: 'name role' },
+  { path: 'documentId', select: 'title' },
+];
+
+/**
+ * The consent as a response body, with real names and title. It is a SEPARATE read: the in-memory consent that the
+ * handlers pass to the audit row and the anchor preimage must keep bare ObjectIds — populated in place, those fields
+ * would stringify as whole user documents and change the anchored digest.
+ */
+const respondWithConsent = async (consentId: Types.ObjectId): Promise<ReturnType<typeof serializeConsent>> => {
+  const populated = await ConsentGrant.findById(consentId).populate(CONSENT_REFERENCES);
+  if (!populated) throw new Error(`Consent ${consentId.toString()} disappeared before its response was built`);
+  return serializeConsent(populated);
+};
+
 const auditConsent = async (
   req: AuthenticatedRequest,
   action: 'CONSENT_REQUESTED' | 'CONSENT_APPROVED' | 'CONSENT_REJECTED' | 'CONSENT_REVOKED',
@@ -159,15 +176,11 @@ export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
     documentTitle: document.title,
     purpose: consent.purpose,
   });
-  res.status(201).json({ message: 'Access request sent to patient', consent: serializeConsent(consent) });
+  res.status(201).json({ message: 'Access request sent to patient', consent: await respondWithConsent(consent._id) });
 });
 
 const sendConsents = async (res: Parameters<RequestHandler>[1], filter: Record<string, unknown>) => {
-  const consents = await ConsentGrant.find(filter)
-    .sort({ requestedAt: -1 })
-    .populate('patientId', 'name role')
-    .populate('doctorId', 'name role')
-    .populate('documentId', 'title');
+  const consents = await ConsentGrant.find(filter).sort({ requestedAt: -1 }).populate(CONSENT_REFERENCES);
   res.json({ consents: consents.map(serializeConsent) });
 };
 
@@ -251,7 +264,7 @@ const updateConsent = (
       documentTitle,
     });
 
-    res.json({ message: `Consent ${status.toLowerCase()}`, consent: serializeConsent(consent) });
+    res.json({ message: `Consent ${status.toLowerCase()}`, consent: await respondWithConsent(consent._id) });
   });
 
 const CONSENT_EVENT_BY_STATUS = {

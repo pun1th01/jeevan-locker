@@ -85,7 +85,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
-### 3.1 Access control — suite 1 (`test/access/`, 801 tests)
+### 3.1 Access control — suite 1 (`test/access/`, 802 tests)
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
@@ -180,6 +180,8 @@ A test that has never been seen failing proves little. Each change below was mad
 | `my-documents` filter forgets live break-glass grants | code | C11 for the two actors reading through a grant, while all 504 C5 cells still passed |
 | Record no `accessMethod` for owner, admin, share and lab reads (the previous code) | code | C10: 80 of the 92 served cells. The 12 that passed are consent and emergency reads on the three non-integrity endpoints, which already named their method. |
 | Record a doctor's share as `owner` | code | C10: both share readers × 4 endpoints = 8 cells |
+| Serialize the consent write responses unjoined (the old code: "Unknown patient" …) | code | `workflows.test.ts`, *consent write responses name the real patient, doctor and document* |
+| Populate the consent in place before its audit row and anchor are written | code | C26, C28 and C29: the anchored preimage would carry whole user documents instead of ids. This is why the write responses use a separate populated read. |
 | Write `INTEGRITY_VERIFIED` rows without the method | code | C10: all 23 served `/integrity` cells |
 | Restore the old catch-all that threw on an unknown role | code | C9: 28 read cells and the list refusal (each got a 500) |
 | Add a fifth role to `USER_ROLES` | code | `tsc`, at both role switches (`not assignable to parameter of type 'never'`) |
@@ -256,7 +258,7 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 12 files, 935 tests | **53–61 s** (56–65 s wall clock) |
+| `npm test` — 12 files, 936 tests | **53–61 s** (56–65 s wall clock) |
 | Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
@@ -271,7 +273,7 @@ Time spent running each file's tests (excluding its app import):
 | `anchoring/anchors.test.ts` | 20 | 11.0 s |
 | `encryption/vault.test.ts` | 30 | 9.8 s |
 | `hardening/limits.test.ts` | 18 | 5.1 s |
-| `access/workflows.test.ts` | 39 | 3.9 s |
+| `access/workflows.test.ts` | 40 | 3.9 s |
 | `access/inventory.test.ts` | 215 | 3.1 s |
 | `hardening/trustProxyBoot.test.ts` | 1 | 2.9 s |
 | `hardening/uploads.test.ts` | 32 | 1.6 s |

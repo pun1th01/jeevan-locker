@@ -271,6 +271,38 @@ describe('consent: only the patient it names can decide it, and only the doctor 
   });
 });
 
+describe('consent write responses name the real patient, doctor and document', () => {
+  it('request, approve, reject and revoke all return the joined names, like the lists do', async () => {
+    const patient = await createUser('patient', { name: 'Meera Patient' });
+    const doctor = await createUser('doctor', { name: 'Dr Arjun Rao' });
+    const firstDocument = (await uploadDocument(patient, 'Echocardiogram 2026')).id;
+    const secondDocument = (await uploadDocument(patient, 'Lipid Panel')).id;
+    const expectNames = (consent: { patient: { name: string }; doctor: { name: string }; document: { title: string } }, title: string, label: string) =>
+      expect({ patient: consent.patient.name, doctor: consent.doctor.name, document: consent.document.title }, label).toEqual({
+        patient: 'Meera Patient',
+        doctor: 'Dr Arjun Rao',
+        document: title,
+      });
+
+    const requested = await call('post', '/api/consents/request', tokenFor(doctor)).send({ patientId: idOf(patient), documentId: firstDocument, purpose: 'Review' });
+    expect(requested.status).toBe(201);
+    expectNames(requested.body.consent, 'Echocardiogram 2026', 'request');
+
+    const approved = await call('patch', `/api/consents/${requested.body.consent.id}/approve`, tokenFor(patient));
+    expect(approved.status).toBe(200);
+    expectNames(approved.body.consent, 'Echocardiogram 2026', 'approve');
+
+    const revoked = await call('patch', `/api/consents/${requested.body.consent.id}/revoke`, tokenFor(patient));
+    expect(revoked.status).toBe(200);
+    expectNames(revoked.body.consent, 'Echocardiogram 2026', 'revoke');
+
+    const second = await requestConsent(doctor, patient, secondDocument);
+    const rejected = await call('patch', `/api/consents/${second.id}/reject`, tokenFor(patient));
+    expect(rejected.status).toBe(200);
+    expectNames(rejected.body.consent, 'Lipid Panel', 'reject');
+  });
+});
+
 describe('break-glass: only the patient it names can end it, and nobody else can see it', () => {
   let patientA: IUser;
   let patientB: IUser;

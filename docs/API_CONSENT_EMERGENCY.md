@@ -108,7 +108,7 @@ interface AnchorReference { digest: string; txHash: string; blockNumber: number;
 
 `anchors` appears once at least one event of the consent is on-chain; each key appears when that event is (ANCHORING.md §8).
 
-**Names in write responses.** The list endpoints join real names and titles. The write endpoints (`POST /consents/request` and the three `PATCH` routes) return the consent **unjoined**, so their `patient.name`, `doctor.name` and `document.title` are the placeholders `Unknown patient`, `Unknown doctor` and `Unavailable document`; the ids are correct. Read names from a list endpoint.
+Every response — the lists and the write endpoints alike — carries the real `patient.name`, `doctor.name` and `document.title`.
 
 ### 3.3 `POST /api/consents/request` — ask a patient for access
 
