@@ -12,6 +12,7 @@ import patientsRoutes from './routes/patients.routes';
 import adminRoutes from './routes/admin.routes';
 import labLinkRoutes from './routes/labLink.routes';
 import labReportRoutes from './routes/labReport.routes';
+import notificationRoutes from './routes/notification.routes';
 
 export const app = express();
 
@@ -40,6 +41,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/lab-links', labLinkRoutes);
 app.use('/api/lab/reports', labReportRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

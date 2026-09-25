@@ -8,6 +8,8 @@ import type { MedicalDocument } from '../../types/document';
 
 interface DocumentListProps {
   documents: MedicalDocument[];
+  /** Active access paths per document, including direct shares, approved consents, and live emergency grants. */
+  accessCountByDocument?: Record<string, number>;
   isLoading: boolean;
   emptyMessage: string;
   emptyTitle?: string;
@@ -43,6 +45,7 @@ const FileIcon = ({ mimeType }: { mimeType: MedicalDocument['mimeType'] }) =>
 
 export default function DocumentList({
   documents,
+  accessCountByDocument,
   isLoading,
   emptyMessage,
   emptyTitle = 'No documents yet',
@@ -63,7 +66,7 @@ export default function DocumentList({
     if (fileType === 'PDF') {
       result = result.filter((d) => d.mimeType === 'application/pdf');
     } else if (fileType === 'Images') {
-      result = result.filter((d) => ['image/png', 'image/jpeg', 'image/jpg'].includes(d.mimeType));
+      result = result.filter((d) => ['image/png', 'image/jpeg'].includes(d.mimeType));
     }
 
     if (searchQuery.trim()) {
@@ -245,7 +248,7 @@ export default function DocumentList({
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] px-2 py-1">
                     <ShieldCheck className="h-3.5 w-3.5" />
-                    {document.sharedWithDoctors.length} shared
+                    {accessCountByDocument?.[document.id] ?? document.sharedWithDoctors.length} shared
                   </span>
                 </div>
               </div>

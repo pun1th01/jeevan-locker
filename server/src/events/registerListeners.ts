@@ -1,4 +1,5 @@
 import { registerNoopListener } from './listeners/noop.listener';
+import { registerNotificationListener } from './listeners/notification.listener';
 
 /**
  * Wires every app-event listener exactly once at boot (called from index.ts before app.listen).
@@ -6,4 +7,5 @@ import { registerNoopListener } from './listeners/noop.listener';
  */
 export const registerAppEventListeners = (): void => {
   registerNoopListener();
+  registerNotificationListener();
 };

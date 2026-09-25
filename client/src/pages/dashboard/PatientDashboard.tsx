@@ -1,17 +1,21 @@
-import { CheckCircle2, FileCheck2, Loader2, Share2, Upload, UsersRound, XCircle } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { AlertTriangle, CheckCircle2, FileCheck2, Link2Off, Loader2, Pencil, Share2, Trash2, Upload, UsersRound, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import DashboardShell from '../../components/dashboard/DashboardShell';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import DocumentUploadModal from '../../components/documents/DocumentUploadModal';
 import EmergencyAccessPanel from '../../components/emergency/EmergencyAccessPanel';
 import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { consentService } from '../../services/consent.service';
+import { emergencyAccessService } from '../../services/emergencyAccess.service';
 import type { User } from '../../types/auth';
-import type { MedicalDocument, UploadDocumentInput } from '../../types/document';
+import type { DocumentMetadataInput, MedicalDocument, UploadDocumentInput } from '../../types/document';
 import type { ConsentGrant } from '../../types/consent';
+import type { EmergencyAccess } from '../../types/emergencyAccess';
 
 export default function PatientDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -32,20 +36,35 @@ export default function PatientDashboard() {
   const [consents, setConsents] = useState<ConsentGrant[]>([]);
   const [consentActionId, setConsentActionId] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
+  const [activeEmergencyAccesses, setActiveEmergencyAccesses] = useState<EmergencyAccess[]>([]);
+  const [metadataDocument, setMetadataDocument] = useState<MedicalDocument | null>(null);
+  const [metadataDraft, setMetadataDraft] = useState<DocumentMetadataInput>({ title: '' });
+  const [isSavingMetadata, setIsSavingMetadata] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [unsharingDoctorId, setUnsharingDoctorId] = useState<string | null>(null);
+  const [managementError, setManagementError] = useState<string | null>(null);
+  const [documentPendingDeletion, setDocumentPendingDeletion] = useState<MedicalDocument | null>(null);
+  const [isSoftDeleting, setIsSoftDeleting] = useState(false);
 
   const loadDashboardData = useCallback(async () => {
     setIsLoading(true);
     setPageError(null);
 
     try {
-      const [documentList, doctorList, receivedConsents] = await Promise.all([
+      const [documentList, doctorList, receivedConsents, emergencyAccesses] = await Promise.all([
         documentService.getMyDocuments(),
         documentService.getDoctors(),
         consentService.getReceived(),
+        emergencyAccessService.list('ACTIVE'),
       ]);
       setDocuments(documentList);
       setDoctors(doctorList);
       setConsents(receivedConsents);
+      setActiveEmergencyAccesses(
+        emergencyAccesses.filter(
+          (emergencyAccess) => emergencyAccess.status === 'ACTIVE' && new Date(emergencyAccess.expiresAt).getTime() > Date.now()
+        )
+      );
     } catch (error) {
       setPageError(getApiErrorMessage(error));
     } finally {
@@ -54,18 +73,36 @@ export default function PatientDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadDashboardData();
+    const timeoutId = window.setTimeout(() => void loadDashboardData(), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadDashboardData]);
 
-  const sharedDoctorCount = useMemo(
-    () => new Set(documents.flatMap((document) => document.sharedWithDoctors.map((doctor) => doctor.id))).size,
-    [documents]
-  );
+  const documentAccessCounts = useMemo(() => {
+    const accessCounts = Object.fromEntries(documents.map((document) => [document.id, document.sharedWithDoctors.length]));
+    const addAccess = (documentId: string) => {
+      accessCounts[documentId] = (accessCounts[documentId] ?? 0) + 1;
+    };
+
+    consents
+      .filter((consent) => consent.status === 'APPROVED')
+      .forEach((consent) => addAccess(consent.document.id));
+    activeEmergencyAccesses.forEach((emergencyAccess) => addAccess(emergencyAccess.documentId));
+
+    return accessCounts;
+  }, [activeEmergencyAccesses, consents, documents]);
+
+  const sharedDoctorCount = useMemo(() => {
+    const doctorIds = new Set<string>();
+    documents.forEach((document) => document.sharedWithDoctors.forEach((doctor) => doctorIds.add(doctor.id)));
+    consents.filter((consent) => consent.status === 'APPROVED').forEach((consent) => doctorIds.add(consent.doctor.id));
+    activeEmergencyAccesses.forEach((emergencyAccess) => doctorIds.add(emergencyAccess.doctorId));
+    return doctorIds.size;
+  }, [activeEmergencyAccesses, consents, documents]);
 
   const metrics = useMemo(
     () => [
       { label: 'Uploaded records', value: String(documents.length), tone: 'text-emerald-300' },
-      { label: 'Doctor shares', value: String(sharedDoctorCount), tone: 'text-cyan-300' },
+      { label: 'Doctors with access', value: String(sharedDoctorCount), tone: 'text-cyan-300' },
       { label: 'Available doctors', value: String(doctors.length), tone: 'text-amber-300' },
     ],
     [documents.length, doctors.length, sharedDoctorCount]
@@ -177,6 +214,94 @@ export default function PatientDashboard() {
     }
   };
 
+  const replaceDocumentInState = (updatedDocument: MedicalDocument) => {
+    setDocuments((currentDocuments) =>
+      currentDocuments.map((document) => (document.id === updatedDocument.id ? { ...document, ...updatedDocument } : document))
+    );
+    setSelectedDocument((currentDocument) =>
+      currentDocument?.id === updatedDocument.id ? { ...currentDocument, ...updatedDocument } : currentDocument
+    );
+  };
+
+  const openMetadataEditor = (document: MedicalDocument) => {
+    setMetadataDocument(document);
+    setMetadataDraft({ title: document.title, ...(document.description ? { description: document.description } : {}) });
+    setMetadataError(null);
+  };
+
+  const handleMetadataSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!metadataDocument) {
+      return;
+    }
+
+    const title = metadataDraft.title.trim();
+    const description = metadataDraft.description?.trim();
+    if (!title) {
+      setMetadataError('A document title is required.');
+      return;
+    }
+
+    setIsSavingMetadata(true);
+    setMetadataError(null);
+
+    try {
+      const updatedDocument = await documentService.updateDocumentMetadata(metadataDocument.id, {
+        title,
+        ...(description !== undefined ? { description } : {}),
+      });
+      replaceDocumentInState(updatedDocument);
+      setMetadataDocument(null);
+      setSuccessMessage(`${updatedDocument.title} metadata was updated.`);
+    } catch (error) {
+      setMetadataError(getApiErrorMessage(error));
+    } finally {
+      setIsSavingMetadata(false);
+    }
+  };
+
+  const handleUnshare = async (document: MedicalDocument, doctor: User) => {
+    setUnsharingDoctorId(doctor.id);
+    setManagementError(null);
+
+    try {
+      const updatedDocument = await documentService.unshareDocument(document.id, doctor.id);
+      replaceDocumentInState(updatedDocument);
+      setSuccessMessage(`Direct access for ${doctor.name} was removed.`);
+    } catch (error) {
+      setManagementError(getApiErrorMessage(error));
+    } finally {
+      setUnsharingDoctorId(null);
+    }
+  };
+
+  const handleSoftDelete = async () => {
+    if (!documentPendingDeletion) {
+      return;
+    }
+
+    setIsSoftDeleting(true);
+    setManagementError(null);
+
+    try {
+      const result = await documentService.softDeleteDocument(documentPendingDeletion.id);
+      const deletedDocumentId = documentPendingDeletion.id;
+      setDocuments((currentDocuments) => currentDocuments.filter((document) => document.id !== deletedDocumentId));
+      setSelectedDocument((currentDocument) => (currentDocument?.id === deletedDocumentId ? null : currentDocument));
+      setPreviewDocument((currentDocument) => (currentDocument?.id === deletedDocumentId ? null : currentDocument));
+      setSelectedDoctorByDocument((currentSelection) =>
+        Object.fromEntries(Object.entries(currentSelection).filter(([documentId]) => documentId !== deletedDocumentId))
+      );
+      setDocumentPendingDeletion(null);
+      setSuccessMessage(result.message);
+    } catch (error) {
+      setManagementError(getApiErrorMessage(error));
+    } finally {
+      setIsSoftDeleting(false);
+    }
+  };
+
   const renderShareActions = (document: MedicalDocument) => {
     const availableDoctors = doctors.filter(
       (doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id)
@@ -281,8 +406,15 @@ export default function PatientDashboard() {
             </div>
           ) : null}
 
+          {managementError ? (
+            <div className="mt-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">
+              {managementError}
+            </div>
+          ) : null}
+
           <DocumentList
             documents={documents}
+            accessCountByDocument={documentAccessCounts}
             isLoading={isLoading}
             emptyTitle="Your record vault is empty"
             emptyMessage="No medical records have been uploaded yet."
@@ -320,7 +452,21 @@ export default function PatientDashboard() {
         <EmergencyAccessPanel />
 
         <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
-          <h2 className="text-lg font-semibold text-white">Selected Record</h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-semibold text-white">Selected Record</h2>
+            {selectedDocument ? (
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="secondary" onClick={() => openMetadataEditor(selectedDocument)}>
+                  <Pencil className="h-4 w-4" />
+                  Edit metadata
+                </Button>
+                <Button type="button" size="sm" variant="destructive" onClick={() => setDocumentPendingDeletion(selectedDocument)}>
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </Button>
+              </div>
+            ) : null}
+          </div>
           {selectedDocument ? (
             <div className="mt-5 space-y-4 text-sm">
               <div className="rounded-md border border-emerald-300/15 bg-emerald-300/[0.04] p-4">
@@ -329,10 +475,11 @@ export default function PatientDashboard() {
                   <span className="font-semibold">{selectedDocument.title}</span>
                 </div>
                 <p className="mt-2 break-all text-slate-400">{selectedDocument.originalFileName}</p>
+                {selectedDocument.description ? <p className="mt-2 whitespace-pre-wrap text-slate-300">{selectedDocument.description}</p> : null}
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
                   <span className="rounded-md bg-white/[0.05] px-2 py-1">{selectedDocument.mimeType}</span>
                   <span className="rounded-md bg-white/[0.05] px-2 py-1">
-                    {selectedDocument.sharedWithDoctors.length} doctor shares
+                    {documentAccessCounts[selectedDocument.id] ?? selectedDocument.sharedWithDoctors.length} doctors with access
                   </span>
                 </div>
               </div>
@@ -349,8 +496,20 @@ export default function PatientDashboard() {
                         key={doctor.id}
                         className="flex flex-col gap-1 rounded-md bg-slate-950/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                       >
-                        <span className="font-medium text-slate-200">{doctor.name}</span>
-                        <span className="break-all text-xs text-slate-500">{doctor.email}</span>
+                        <div>
+                          <span className="font-medium text-slate-200">{doctor.name}</span>
+                          <span className="ml-2 break-all text-xs text-slate-500">{doctor.email}</span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void handleUnshare(selectedDocument, doctor)}
+                          disabled={unsharingDoctorId === doctor.id}
+                        >
+                          {unsharingDoctorId === doctor.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2Off className="h-4 w-4" />}
+                          Unshare
+                        </Button>
                       </div>
                     ))
                   ) : (
@@ -383,6 +542,72 @@ export default function PatientDashboard() {
         isOpen={Boolean(previewDocument)}
         onClose={() => setPreviewDocument(null)}
       />
+
+      <Dialog.Root open={Boolean(metadataDocument)} onOpenChange={(isOpen) => !isOpen && setMetadataDocument(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <Dialog.Title className="text-lg font-semibold text-white">Edit document metadata</Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm leading-6 text-slate-400">
+              Update the document title or add a short description. The file and its cryptographic hash are unchanged.
+            </Dialog.Description>
+            <form className="mt-5 space-y-4" onSubmit={(event) => void handleMetadataSave(event)}>
+              <label className="block text-sm font-medium text-slate-200">
+                Title
+                <Input
+                  value={metadataDraft.title}
+                  onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, title: event.target.value }))}
+                  className="mt-2"
+                  required
+                  maxLength={120}
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-200">
+                Description <span className="font-normal text-slate-500">(optional)</span>
+                <textarea
+                  value={metadataDraft.description ?? ''}
+                  onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, description: event.target.value }))}
+                  className="mt-2 min-h-28 w-full rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20"
+                  maxLength={2000}
+                />
+              </label>
+              {metadataError ? <p className="text-sm text-rose-200">{metadataError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <Dialog.Close asChild>
+                  <Button type="button" variant="secondary" disabled={isSavingMetadata}>Cancel</Button>
+                </Dialog.Close>
+                <Button type="submit" disabled={isSavingMetadata}>
+                  {isSavingMetadata ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                  Save changes
+                </Button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={Boolean(documentPendingDeletion)} onOpenChange={(isOpen) => !isOpen && setDocumentPendingDeletion(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-300/20 bg-slate-900 p-6 shadow-2xl">
+            <Dialog.Title className="flex items-center gap-2 text-lg font-semibold text-white"><AlertTriangle className="h-5 w-5 text-rose-300" />Delete document?</Dialog.Title>
+            <Dialog.Description className="mt-3 rounded-md border border-rose-300/25 bg-rose-300/10 p-3 text-sm leading-6 text-rose-100">
+              The cryptographic hash permanently remains recorded on the blockchain. This action only hides the document from standard vault lists.
+            </Dialog.Description>
+            <p className="mt-3 text-sm leading-6 text-slate-400">The original file and audit trail are retained for integrity and compliance records.</p>
+            {managementError ? <p className="mt-3 text-sm text-rose-200">{managementError}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <Button type="button" variant="secondary" disabled={isSoftDeleting}>Cancel</Button>
+              </Dialog.Close>
+              <Button type="button" variant="destructive" onClick={() => void handleSoftDelete()} disabled={isSoftDeleting}>
+                {isSoftDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete document
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </>
   );
 }

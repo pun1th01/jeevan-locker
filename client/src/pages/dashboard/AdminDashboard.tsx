@@ -25,11 +25,15 @@ import {
   UsersRound,
   XCircle,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import AnchorPanel from '../../components/admin/AnchorPanel';
 import DashboardShell from '../../components/dashboard/DashboardShell';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
 import { getApiErrorMessage } from '../../lib/api';
+import { adminService, type CreateLabUserInput } from '../../services/admin.service';
 import { auditService } from '../../services/audit.service';
+import type { User } from '../../types/auth';
 import type { AuditAction, AuditSummary } from '../../types/audit';
 
 const actionLabels: Record<AuditAction, string> = {
@@ -174,10 +178,26 @@ const AuditActionIcon = ({ action }: { action: AuditAction }) => {
   return <Icon className="h-4 w-4" />;
 };
 
+const initialLabForm: CreateLabUserInput = {
+  name: '',
+  email: '',
+  password: '',
+  organisation: '',
+  role: 'lab',
+};
+
 export default function AdminDashboard() {
   const [summary, setSummary] = useState<AuditSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [pendingDoctors, setPendingDoctors] = useState<User[]>([]);
+  const [isLoadingPendingDoctors, setIsLoadingPendingDoctors] = useState(true);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [verifyingDoctorId, setVerifyingDoctorId] = useState<string | null>(null);
+  const [labForm, setLabForm] = useState<CreateLabUserInput>(initialLabForm);
+  const [isProvisioningLab, setIsProvisioningLab] = useState(false);
+  const [labFormError, setLabFormError] = useState<string | null>(null);
+  const [labFormNotice, setLabFormNotice] = useState<string | null>(null);
 
   const loadSummary = useCallback(async () => {
     setIsLoading(true);
@@ -192,9 +212,64 @@ export default function AdminDashboard() {
     }
   }, []);
 
+  const loadPendingDoctors = useCallback(async () => {
+    setIsLoadingPendingDoctors(true);
+    setQueueError(null);
+
+    try {
+      setPendingDoctors(await adminService.getPendingDoctors());
+    } catch (error) {
+      setQueueError(getApiErrorMessage(error));
+    } finally {
+      setIsLoadingPendingDoctors(false);
+    }
+  }, []);
+
   useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+    const timeoutId = window.setTimeout(() => {
+      void loadSummary();
+      void loadPendingDoctors();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadPendingDoctors, loadSummary]);
+
+  const handleVerifyDoctor = async (doctor: User) => {
+    setVerifyingDoctorId(doctor.id);
+    setQueueError(null);
+
+    try {
+      await adminService.verifyDoctor(doctor.id);
+      setPendingDoctors((currentDoctors) => currentDoctors.filter((currentDoctor) => currentDoctor.id !== doctor.id));
+      void loadSummary();
+    } catch (error) {
+      setQueueError(getApiErrorMessage(error));
+    } finally {
+      setVerifyingDoctorId(null);
+    }
+  };
+
+  const handleLabFormChange = (field: Exclude<keyof CreateLabUserInput, 'role'>, value: string) => {
+    setLabForm((currentForm) => ({ ...currentForm, [field]: value }));
+  };
+
+  const handleProvisionLab = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsProvisioningLab(true);
+    setLabFormError(null);
+    setLabFormNotice(null);
+
+    try {
+      const lab = await adminService.createLab(labForm);
+      setLabForm(initialLabForm);
+      setLabFormNotice(`${lab.name} was provisioned as a verified lab account.`);
+      void loadSummary();
+    } catch (error) {
+      setLabFormError(getApiErrorMessage(error));
+    } finally {
+      setIsProvisioningLab(false);
+    }
+  };
 
   const metrics = useMemo(
     () => [
@@ -211,6 +286,79 @@ export default function AdminDashboard() {
       subtitle="Monitor platform activity, document volume, and access events across JeevanLocker."
       metrics={metrics}
     >
+      <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-300/10">
+            <BadgeCheck className="h-5 w-5 text-amber-200" />
+          </span>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Doctor Verification Queue</h2>
+            <p className="mt-1 text-sm text-slate-400">Approve registered doctors before they can request patient access.</p>
+          </div>
+        </div>
+
+        {queueError ? (
+          <div className="mt-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">{queueError}</div>
+        ) : null}
+
+        {isLoadingPendingDoctors ? (
+          <div className="mt-5 flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+            Loading pending doctors...
+          </div>
+        ) : pendingDoctors.length > 0 ? (
+          <div className="mt-5 space-y-3">
+            {pendingDoctors.map((doctor) => (
+              <div key={doctor.id} className="flex flex-col gap-3 rounded-md border border-white/10 bg-slate-950/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{doctor.name}</p>
+                  <p className="truncate text-xs text-slate-400">{doctor.email}</p>
+                  {doctor.organisation ? <p className="mt-1 text-xs text-slate-500">{doctor.organisation}</p> : null}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleVerifyDoctor(doctor)}
+                  disabled={verifyingDoctorId === doctor.id}
+                >
+                  {verifyingDoctorId === doctor.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                  Verify
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-4 text-sm text-slate-400">
+            No doctor accounts are awaiting verification.
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-violet-300/10">
+            <FlaskConical className="h-5 w-5 text-violet-200" />
+          </span>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Provision Lab Account</h2>
+            <p className="mt-1 text-sm text-slate-400">Creates verified lab accounts only. Administrator accounts remain CLI-only.</p>
+          </div>
+        </div>
+
+        <form className="mt-5 space-y-3" onSubmit={(event) => void handleProvisionLab(event)}>
+          <Input value={labForm.name} onChange={(event) => handleLabFormChange('name', event.target.value)} placeholder="Lab name" aria-label="Lab name" required minLength={2} />
+          <Input value={labForm.email} onChange={(event) => handleLabFormChange('email', event.target.value)} placeholder="Lab email" aria-label="Lab email" type="email" required />
+          <Input value={labForm.organisation} onChange={(event) => handleLabFormChange('organisation', event.target.value)} placeholder="Organisation" aria-label="Organisation" required minLength={2} maxLength={120} />
+          <Input value={labForm.password} onChange={(event) => handleLabFormChange('password', event.target.value)} placeholder="Temporary password" aria-label="Temporary password" type="password" required minLength={8} />
+          {labFormError ? <p className="text-sm text-rose-200">{labFormError}</p> : null}
+          {labFormNotice ? <p className="text-sm text-emerald-200">{labFormNotice}</p> : null}
+          <Button type="submit" disabled={isProvisioningLab}>
+            {isProvisioningLab ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
+            Provision lab
+          </Button>
+        </form>
+      </div>
+
       <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
         <div className="flex items-start gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-300/10">

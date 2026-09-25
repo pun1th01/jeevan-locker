@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { api } from '../lib/api';
 import type { User } from '../types/auth';
-import type { IntegrityVerificationResult, MedicalDocument, UploadDocumentInput } from '../types/document';
+import type { DocumentMetadataInput, IntegrityVerificationResult, MedicalDocument, UploadDocumentInput } from '../types/document';
 
 interface DocumentResponse {
   document: MedicalDocument;
@@ -108,6 +108,21 @@ export const documentService = {
   async shareDocument(documentId: string, doctorId: string): Promise<MedicalDocument> {
     const { data } = await api.patch<DocumentResponse>(`/documents/${documentId}/share`, { doctorId });
     return data.document;
+  },
+
+  async unshareDocument(documentId: string, doctorId: string): Promise<MedicalDocument> {
+    const { data } = await api.patch<DocumentResponse>(`/documents/${documentId}/unshare`, { doctorId });
+    return data.document;
+  },
+
+  async updateDocumentMetadata(documentId: string, data: DocumentMetadataInput): Promise<MedicalDocument> {
+    const { data: response } = await api.patch<DocumentResponse>(`/documents/${documentId}/metadata`, data);
+    return response.document;
+  },
+
+  async softDeleteDocument(documentId: string): Promise<{ message: string }> {
+    const { data } = await api.delete<{ message: string }>(`/documents/${documentId}`);
+    return data;
   },
 
   async getDoctors(): Promise<User[]> {

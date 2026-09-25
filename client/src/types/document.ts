@@ -24,6 +24,7 @@ export interface TestValue {
 export interface MedicalDocument {
   id: string;
   title: string;
+  description?: string;
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
   /** The owning patient — also for lab reports. */
@@ -52,6 +53,11 @@ export interface MedicalDocument {
 export interface UploadDocumentInput {
   title: string;
   file: File;
+}
+
+export interface DocumentMetadataInput {
+  title: string;
+  description?: string;
 }
 
 export interface IntegrityVerificationResult {
