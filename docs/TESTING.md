@@ -120,6 +120,21 @@ Specification: [ENCRYPTION.md](ENCRYPTION.md). Files are uploaded over HTTP, tam
 | C24 | Documents stored before encryption existed keep working, and the chain still catches changes to them. | A legacy row (plaintext file, no `encryption`, hash really registered on the chain) is served byte for byte, reported `encryptedAtRest: false`, and verifies. After one bit of its file is changed, `/integrity` reports `verified: false` with the new and the registered hash. | *C24* |
 | C25 | Plaintext never outlives the upload request, whatever fails. | A validation failure (no title) leaves no file and no row. A real chain outage *after* encryption (nothing listening on the RPC port) leaves no plaintext, no ciphertext and no row; with the chain back, the same upload succeeds. | *C25* |
 
+### 3.3 On-chain audit anchoring — suite 3 (`test/anchoring/`, 21 tests)
+
+Specification: [ANCHORING.md](ANCHORING.md). The preimages are rebuilt **by the test** from ANCHORING.md §2, never by calling the server's builder, and the contract is read directly with ethers. The worker is driven one step at a time (`processNextAnchor`), so every state is reached deterministically. `npm run verify:anchors` remains the separate, database-free check of the §3 worked example.
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C26 | Every consent transition and every break-glass grant and revocation is anchored exactly once, and each anchor can be recomputed from the database record alone. | A world with an approved-then-revoked consent, a rejected consent, a revoked grant and a live grant anchors exactly the eight events that happened. For each one, the preimage the test builds from the record equals the stored preimage, its SHA-256 equals the stored digest, the digest under `keccak256(recordKey)` on the contract is that digest, and the proof is copied onto the record. | `anchors.test.ts` → *C26* |
+| C27 | The chain holds a key and a digest and nothing that identifies anyone. | Each anchoring transaction's calldata is byte-for-byte `anchor(keccak256(recordKey), digest)`; no patient, doctor or document id and no free text appears in it. | `anchors.test.ts` → *C27* |
+| C28 | Verification compares three independently obtained digests — recomputed from the record, stored at the time, read from the chain — and claims "verified" only when all three agree and the chain was actually reached. | Every anchor of the world verifies with all three equal. A row not yet on-chain is reported as `matchesRecord: true, matchesChain: false`, not verified. With the node unreachable the verdict is `chainReachable: false`, never verified. | `anchors.test.ts` → *C28* |
+| C29 | A record edited after it was anchored is detected, and the verdict names exactly the field that changed. | Edits made directly in the database: consent `purpose`; consent `approvedAt` (named `occurredAt`, and only on the APPROVED anchor, while REQUESTED and REVOKED still verify); consent doctor + purpose (both named); grant `reason` and `expiresAt` (GRANTED only); grant `revokedBy` (REVOKED only); the document's `documentHash` (named on every anchor of that consent). In each case the stored digest still matches the chain, so the finding is attributed to the record. A deleted record cannot verify. | `anchors.test.ts` → *C29* |
+| C30 | A chain outage never fails or blocks a request, and anchoring completes once the chain returns. | A private Hardhat node is deployed, then really killed (process tree, port closed). A consent is requested (201) and approved (200) during the outage. Their anchor rows stay `PENDING` with `attempts`, `lastAttemptAt`, a later `nextAttemptAt` and `lastError` (`ECONNREFUSED`). The node is restarted on the same port; a fresh deploy lands at the same addresses; both rows reach `ANCHORED` and their digests are on the restarted chain. | `outage.test.ts` |
+| C31 | Anchoring is at-least-once without duplicates: a retry never writes a second anchor and can never overwrite one with a different digest. | A row reset to the state a crash between "transaction mined" and "row saved" leaves behind is retried, recognised as already anchored, and recovers the *original* transaction hash and block; the contract holds exactly one `Anchored` event for the key. A row whose digest no longer matches the chain goes `FAILED` on its first retry (not after the cap), is audited, and the chain keeps the original digest. | `anchors.test.ts` → *C31* |
+| C32 | A lost anchor row is re-derived from the record itself, and only for events that happened. | Deleting a consent's APPROVED row, then running boot reconciliation, re-creates exactly that row, with the same preimage and digest and source `reconciliation`. A second run creates nothing. A rejected consent never gains an APPROVED or REVOKED row. The rebuilt row anchors by recovering the original transaction. | `anchors.test.ts` → *C32* |
+| C33 | An anchor that exhausts its attempts becomes `FAILED`, is audited, is visible to admins and can be retried to completion. | With `ANCHOR_MAX_ATTEMPTS=2` and the chain unreachable, the row fails after exactly two attempts, `failedAt` is set, and one `CHAIN_ANCHOR_FAILED` row names the event's actor. `GET /admin/anchors?status=FAILED` lists and counts it. `POST …/retry` re-queues it (`attempts: 0`, source `retry`), and with the chain back it anchors. A second retry is `409`, an unknown id `404`, and malformed list filters `400`. | `anchors.test.ts` → *C33* |
+
 ---
 
 ## 4. Evidence the tests can fail
@@ -142,6 +157,14 @@ A test that has never been seen failing proves little. Each change below was mad
 | `/integrity` hashes the file on disk (the ciphertext) instead of the plaintext | code | C20, and every C21 tamper case on `/integrity` |
 | Leave the plaintext upload temp on disk | code | C19 (a second new file) and C25 (a file left after the chain failure) |
 | Skip the `DOCUMENT_INTEGRITY_FAILED` audit row | code | C21, all eight tamper cases |
+| Swap two keys of the GRANTED preimage | code | C26 (the test's own §2 preimage no longer matches); `verify:anchors` too |
+| Verdict ignores the chain (`verified = matchesRecord`) | code | C28: the not-yet-anchored row and the unreachable-node case |
+| Differing fields never reported | code | C29: all seven edit cases |
+| Remove "already anchored" recovery in the worker | code | C31 (both), C32 |
+| Accept a key already anchored with a *different* digest | code | C31, the overwrite case |
+| Reconciliation forgets APPROVED events | code | C32 |
+| Skip the `CHAIN_ANCHOR_FAILED` audit row | code | C31 (overwrite case) and C33 |
+| Make the consent request send its anchor synchronously | code | C30 (the request failed during the outage), plus C28, C32 and C33, which all rely on the request not touching the chain |
 | Remove a variable from the pinned test environment | harness | G1, naming the variable and the file that reads it |
 
 ---
