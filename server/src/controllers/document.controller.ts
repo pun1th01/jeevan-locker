@@ -177,9 +177,14 @@ interface DocumentAccessDecision {
   emergencyExpiresAt?: string;
 }
 
-/** Compile-time exhaustiveness guard: adding a role to USER_ROLES without a branch below is a type error. */
-const assertRoleHandled = (role: never): never => {
-  throw new Error(`Unhandled user role: ${String(role)}`);
+/**
+ * Exhaustiveness guard for the role switches below. At compile time `role` narrows to `never` only when every
+ * role in USER_ROLES has a branch, so adding a role without one fails tsc. At runtime it is reached only by a
+ * stored role outside USER_ROLES (the schema enum rules that out through the app), and the caller denies:
+ * a clean 403, never a thrown error — and never a stack trace — in the access path.
+ */
+const assertRoleHandled = (role: never): void => {
+  void role;
 };
 
 /**
@@ -229,7 +234,8 @@ const getDocumentAccessDecision = async (
     }
 
     default:
-      return assertRoleHandled(user.role);
+      assertRoleHandled(user.role);
+      return { allowed: false };
   }
 };
 
@@ -485,9 +491,9 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
 
 /**
  * Builds the list filter for GET /documents/my-documents. Mirrors getDocumentAccessDecision branch for branch:
- * anything this returns must also be allowed by that function, and vice versa.
+ * anything this returns must also be allowed by that function, and vice versa. null = the role may not list.
  */
-const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unknown>> => {
+const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unknown> | null> => {
   switch (user.role) {
     case 'admin':
       return {};
@@ -516,7 +522,8 @@ const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unkn
     }
 
     default:
-      return assertRoleHandled(user.role);
+      assertRoleHandled(user.role);
+      return null;
   }
 };
 
@@ -528,7 +535,14 @@ export const getMyDocuments: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
-  const documents = await MedicalDocument.find(await getMyDocumentsFilter(user))
+  const filter = await getMyDocumentsFilter(user);
+
+  if (!filter) {
+    res.status(403).json({ message: 'You do not have permission to access this resource' });
+    return;
+  }
+
+  const documents = await MedicalDocument.find(filter)
     .sort({ createdAt: -1 })
     .populate('uploadedBy', USER_REFERENCE_FIELDS)
     .populate('sharedWithDoctors', USER_REFERENCE_FIELDS)

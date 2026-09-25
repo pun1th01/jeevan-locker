@@ -34,7 +34,7 @@ import {
  *   lab     -> only reports it issued — nothing else, and still after the link is revoked
  *   doctor  -> a direct share, an APPROVED consent, or a LIVE break-glass grant; verification gates initiating
  *              new access, not access already given
- *   any other role -> nothing
+ *   any other role -> nothing, refused with the same clean 403 as any other denial
  */
 
 type DocName = 'doc1' | 'doc2' | 'doc3' | 'reportA' | 'reportA2' | 'docB' | 'reportB';
@@ -201,13 +201,9 @@ describe('read matrix: every actor x every document x every read endpoint', () =
       if (endpoint.suffix === '/view') expect(response.headers['content-disposition'], context).toMatch(/^inline/);
       if (endpoint.suffix === '/download') expect(response.headers['content-disposition'], context).toMatch(/^attachment/);
       if (endpoint.suffix === '/integrity') expect(response.body.verified, context).toBe(true);
-    } else if (actor === 'unknownRole') {
-      // The tail of the role switch denies. No particular status is promised for a role that cannot exist —
-      // only that nothing is served.
-      expect(response.status, context).toBeGreaterThanOrEqual(400);
-      expect(response.body.document, context).toBeUndefined();
-      expect(response.headers['content-disposition'], context).toBeUndefined();
     } else {
+      // Includes the unknown role: the tail of the role switch denies explicitly, like any other refusal —
+      // no thrown error, no 500, no stack trace.
       expect(response.status, context).toBe(403);
       expect(response.body, context).toEqual({ message: DENIED_MESSAGE });
     }
@@ -218,7 +214,7 @@ describe('read matrix: every actor x every document x every read endpoint', () =
 
   // API_LAB.md §5: 404 Document not found for unknown ids. A malformed id is an unknown id — same answer, so the
   // response never distinguishes "exists but not yours" (403) from anything but a real, well-formed id.
-  it.each(ACTOR_NAMES.filter((actor) => actor !== 'unknownRole'))('%s gets 404 for an unknown or malformed document id', async (actor) => {
+  it.each(ACTOR_NAMES)('%s gets 404 for an unknown or malformed document id', async (actor) => {
     for (const endpoint of READ_ENDPOINTS) {
       for (const id of [new Types.ObjectId().toString(), 'not-an-id']) {
         const response = await call('get', `/api/documents/${id}${endpoint.suffix}`, tokens[actor]);
@@ -239,10 +235,10 @@ describe('list mirrors decision: my-documents holds exactly what the actor may o
     expect(listed.sort()).toEqual(READABLE[actor].map((doc) => docIds[doc]).sort());
   });
 
-  it('an unknown role gets no list at all', async () => {
+  it('an unknown role is refused the list with a clean 403', async () => {
     const response = await call('get', '/api/documents/my-documents', tokens.unknownRole);
-    expect(response.status).toBeGreaterThanOrEqual(400);
-    expect(response.body.documents).toBeUndefined();
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ message: 'You do not have permission to access this resource' });
   });
 });
 
