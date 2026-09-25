@@ -85,7 +85,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
-### 3.1 Access control — suite 1 (`test/access/`, 800 tests)
+### 3.1 Access control — suite 1 (`test/access/`, 801 tests)
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
@@ -107,7 +107,7 @@ Five suites: access control, encryption, anchoring, break-glass and hardening. E
 | C16 | A consent, grant or lab link can be decided only by the patient it names and seen only by the parties to it; a doctor cannot pair one patient with another patient's document. | Another patient's approve, reject or revoke is refused and the record keeps its state. Another patient's revoke of a live grant is refused and the doctor still reads. Third parties' lists never contain the record. A mismatched patient/document pair is refused and creates nothing. | `workflows.test.ts` → *consent*, *break-glass*, *lab links* |
 | C17 | A lab can upload into a patient's vault only while that patient's link is `ACTIVE`, and a refused upload stores nothing. | Uploads while pending, rejected, revoked or never linked are refused and leave no document row. The same lab succeeds while `ACTIVE`, and a report addressed to a non-patient id is 404. | `workflows.test.ts` → *lab links* |
 
-### 3.2 Encryption at rest — suite 2 (`test/encryption/vault.test.ts`, 28 tests)
+### 3.2 Encryption at rest — suite 2 (`test/encryption/vault.test.ts`, 30 tests)
 
 Specification: [ENCRYPTION.md](ENCRYPTION.md). Files are uploaded over HTTP, tampered with byte by byte on disk, and read back through the real endpoints.
 
