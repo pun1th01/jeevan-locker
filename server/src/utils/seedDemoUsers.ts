@@ -5,6 +5,7 @@ import { Types } from 'mongoose';
 import { connectDB, disconnectDB } from '../config/db';
 import { env } from '../config/env';
 import { AccessLog, type AuditAction } from '../models/AccessLog';
+import { LabLink } from '../models/LabLink';
 import { MedicalDocument, type IMedicalDocument, type MedicalDocumentMimeType } from '../models/MedicalDocument';
 import { User, type IUser } from '../models/User';
 import { getStoredDocumentPath, UPLOAD_DIRECTORY } from '../middleware/upload.middleware';
@@ -58,6 +59,20 @@ type DemoAsset =
   | { kind: 'pdf'; subtitle: string; sections: string[] }
   | { kind: 'png'; variant: 'xray' | 'vaccination' }
   | { kind: 'jpeg'; variant: 'mri' };
+
+/**
+ * A lab's authorisation to upload into a patient's vault. Every lab report in `demoDocuments` needs one, approved
+ * before the report — `assertLabReportsAreAuthorised` refuses to seed a world where a lab issued a report it was
+ * never authorised to upload (the rule POST /lab/reports enforces).
+ */
+interface DemoLabLinkSeed {
+  labEmail: string;
+  patientEmail: string;
+  requestedAt: Date;
+  approvedAt: Date;
+  labIpAddress: string;
+  patientIpAddress: string;
+}
 
 interface DemoAuditSeed {
   userEmail: string;
@@ -320,6 +335,25 @@ const demoDocuments: DemoDocumentSeed[] = [
       { name: 'Total Cholesterol', value: 220, unit: 'mg/dL', refHigh: 200 },
       { name: 'HDL', value: 45, unit: 'mg/dL', refLow: 40, refHigh: 60 },
     ],
+  },
+];
+
+const demoLabLinks: DemoLabLinkSeed[] = [
+  {
+    labEmail: 'lab@jeevanlocker.dev',
+    patientEmail: 'patient@jeevanlocker.dev',
+    requestedAt: date('2026-05-20T10:05:00+05:30'),
+    approvedAt: date('2026-05-20T19:42:00+05:30'),
+    labIpAddress: '14.139.87.12',
+    patientIpAddress: '49.36.118.20',
+  },
+  {
+    labEmail: 'lab@jeevanlocker.dev',
+    patientEmail: 'patient2@jeevanlocker.dev',
+    requestedAt: date('2026-05-21T11:20:00+05:30'),
+    approvedAt: date('2026-05-22T08:55:00+05:30'),
+    labIpAddress: '14.139.87.12',
+    patientIpAddress: '106.51.73.4',
   },
 ];
 
@@ -944,6 +978,60 @@ const ensureDemoAuditLog = async (
   });
 };
 
+/**
+ * Every seeded lab report must have a link between its lab and its patient, approved before the report's own dates.
+ * Checked before anything is written, so a future edit to the seed data cannot quietly break the demo world.
+ */
+const assertLabReportsAreAuthorised = () => {
+  for (const documentSeed of demoDocuments) {
+    if (!documentSeed.uploadedByLabEmail) continue;
+
+    const link = demoLabLinks.find((seed) => seed.labEmail === documentSeed.uploadedByLabEmail && seed.patientEmail === documentSeed.ownerEmail);
+    const reportTimes = [documentSeed.createdAt, documentSeed.reportDate].filter((value): value is Date => value instanceof Date);
+
+    if (!link) {
+      throw new Error(`Demo lab report "${documentSeed.key}" has no lab link seed for ${documentSeed.uploadedByLabEmail} -> ${documentSeed.ownerEmail}`);
+    }
+
+    if (link.requestedAt >= link.approvedAt || reportTimes.some((time) => link.approvedAt >= time)) {
+      throw new Error(`Demo lab link for "${documentSeed.key}" must be requested, then approved, before the report is dated`);
+    }
+  }
+};
+
+/**
+ * One ACTIVE link per seed, idempotent: an open (PENDING or ACTIVE) link for the pair is brought to ACTIVE with the
+ * seeded dates, otherwise one is created. The LAB_LINK_REQUESTED / LAB_LINKED audit rows mirror what the real
+ * endpoints write, and are only added once.
+ */
+const ensureDemoLabLink = async (seed: DemoLabLinkSeed, userByEmail: Map<string, IUser>) => {
+  const lab = userByEmail.get(seed.labEmail);
+  const patient = userByEmail.get(seed.patientEmail);
+
+  if (!lab || !patient) {
+    throw new Error(`Missing seeded account for lab link ${seed.labEmail} -> ${seed.patientEmail}`);
+  }
+
+  const dates = { status: 'ACTIVE' as const, requestedAt: seed.requestedAt, approvedAt: seed.approvedAt };
+  const open = await LabLink.findOne({ labId: lab._id, patientId: patient._id, status: { $in: ['PENDING', 'ACTIVE'] } });
+  const link = open
+    ? (await LabLink.findByIdAndUpdate(open._id, { $set: dates }, { returnDocument: 'after' }))!
+    : await LabLink.create({ labId: lab._id, patientId: patient._id, ...dates });
+
+  const auditRows: Array<{ userId: IUser['_id']; action: AuditAction; timestamp: Date; ipAddress: string; status: string }> = [
+    { userId: lab._id, action: 'LAB_LINK_REQUESTED', timestamp: seed.requestedAt, ipAddress: seed.labIpAddress, status: 'PENDING' },
+    { userId: patient._id, action: 'LAB_LINKED', timestamp: seed.approvedAt, ipAddress: seed.patientIpAddress, status: 'ACTIVE' },
+  ];
+
+  for (const row of auditRows) {
+    const metadata = { labLinkId: link._id.toString(), labId: lab._id.toString(), patientId: patient._id.toString(), status: row.status };
+
+    if (await AccessLog.exists({ userId: row.userId, action: row.action, 'metadata.labLinkId': metadata.labLinkId })) continue;
+
+    await AccessLog.create({ userId: row.userId, action: row.action, targetDocument: null, timestamp: row.timestamp, ipAddress: row.ipAddress, metadata });
+  }
+};
+
 export const seedDemoUsers = async (): Promise<void> => {
   if (env.nodeEnv !== 'development') {
     return;
@@ -952,6 +1040,7 @@ export const seedDemoUsers = async (): Promise<void> => {
   const userByEmail = new Map<string, IUser>();
   const documentByKey = new Map<string, IMedicalDocument>();
 
+  assertLabReportsAreAuthorised();
   await fs.mkdir(UPLOAD_DIRECTORY, { recursive: true });
 
   for (const account of demoAccounts) {
@@ -964,12 +1053,16 @@ export const seedDemoUsers = async (): Promise<void> => {
     documentByKey.set(documentSeed.key, document);
   }
 
+  for (const linkSeed of demoLabLinks) {
+    await ensureDemoLabLink(linkSeed, userByEmail);
+  }
+
   for (const auditSeed of demoAudits) {
     await ensureDemoAuditLog(auditSeed, userByEmail, documentByKey);
   }
 
   console.log(
-    `[Dev] Demo environment ready: ${demoAccounts.length} accounts, ${demoDocuments.length} documents, ${demoAudits.length} audit events.`
+    `[Dev] Demo environment ready: ${demoAccounts.length} accounts, ${demoDocuments.length} documents, ${demoLabLinks.length} active lab links, ${demoAudits.length} audit events.`
   );
 };
 
