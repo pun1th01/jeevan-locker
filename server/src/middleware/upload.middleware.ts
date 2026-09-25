@@ -3,6 +3,11 @@ import multer from 'multer';
 import path from 'path';
 import { randomUUID } from 'crypto';
 
+/**
+ * The largest accepted upload, INCLUSIVE: a file of exactly 5 MB (5,242,880 bytes) is accepted and one byte more is
+ * refused with 413. The client's check (DocumentUploadModal: `file.size > 5 MB` is the only rejection) uses the same
+ * boundary, so a file the UI approves is never refused here.
+ */
 export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024;
 export const UPLOAD_DIRECTORY = path.resolve(process.cwd(), 'uploads');
 
@@ -28,7 +33,9 @@ const storage = multer.diskStorage({
 export const uploadMedicalDocument = multer({
   storage,
   limits: {
-    fileSize: MAX_UPLOAD_SIZE_BYTES,
+    // busboy reports the limit the moment a file REACHES `fileSize` bytes — it cannot know whether more follow — so
+    // the configured value is one byte above the largest file we accept.
+    fileSize: MAX_UPLOAD_SIZE_BYTES + 1,
     files: 1,
   },
   fileFilter: (_req, file, callback) => {

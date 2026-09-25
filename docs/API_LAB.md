@@ -164,7 +164,7 @@ Role: **lab**. Requires an `ACTIVE` link with the target patient. Content type: 
 
 | Field | Type | Required | Rule |
 |---|---|---|---|
-| `file` | file | yes | PDF, JPEG or PNG; max **5 MB**; one file. The declared MIME type is checked against the file's **magic bytes** — a mismatch is rejected. |
+| `file` | file | yes | PDF, JPEG or PNG; at most **5 MB** — 5,242,880 bytes is accepted, 5,242,881 is refused with `413` (the same boundary as the upload dialog); one file. The declared MIME type is checked against the file's **magic bytes** — a mismatch is rejected. |
 | `patientId` | string | yes | 24-hex user id of a **patient** (get it from the link's `patient.id`) |
 | `title` | string | yes | 1–120 chars after trim |
 | `labName` | string | no | ≤ 120 |
@@ -184,7 +184,7 @@ Errors (in the order they are checked):
 | Status | Message | When |
 |---|---|---|
 | 400 | `Only PDF, JPG, and PNG files are allowed` | declared MIME type outside the whitelist (multer) |
-| 413 | `Uploaded file exceeds the 5 MB limit` | |
+| 413 | `Uploaded file exceeds the 5 MB limit` | the file is larger than 5,242,880 bytes (exactly 5 MB is accepted) |
 | 400 | `Document upload failed` | other multer error (e.g. two files) |
 | 400 | `A PDF, JPG, or PNG report file is required` | no `file` part |
 | 400 | `A valid patient ID is required` | `patientId` not a 24-hex ObjectId |

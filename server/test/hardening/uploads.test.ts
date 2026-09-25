@@ -86,6 +86,13 @@ describe('C41 only whitelisted types, at most 5 MB, one file — refused before 
       }
     );
 
+    // The boundary is inclusive, matching the upload dialog (DocumentUploadModal rejects only file.size > 5 MB):
+    // a file the UI approves must never be refused by the server.
+    it('exactly 5 MB (5,242,880 bytes) is accepted', async () => {
+      const response = await send(route, body(PDF, MAX_BYTES), 'application/pdf', 'exact.pdf');
+      expect(response.status).toBe(201);
+    });
+
     it('one byte over 5 MB is refused with 413 and the partial file is removed', async () => {
       const response = await leavesNothing(() => send(route, body(PDF, MAX_BYTES + 1), 'application/pdf', 'big.pdf'));
       expect(response.status).toBe(413);
@@ -107,11 +114,4 @@ describe('C41 only whitelisted types, at most 5 MB, one file — refused before 
     });
   });
 
-  // The unambiguous edges of "max 5 MB". A file of EXACTLY 5 MB (5,242,880 bytes) is refused by the multer limit,
-  // which reads "max 5 MB" as exclusive; the docs do not say which is meant. That is recorded as an open finding in
-  // docs/TESTING.md §5 and deliberately not asserted either way here.
-  it('one byte under 5 MB is accepted', async () => {
-    const response = await send('patient upload', body(PDF, MAX_BYTES - 1), 'application/pdf', 'just-under.pdf');
-    expect(response.status).toBe(201);
-  });
 });
