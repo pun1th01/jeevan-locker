@@ -1,5 +1,5 @@
 import { Interface, zeroPadValue } from 'ethers';
-import { expectContractEvent, getContract, readChainConfig, sendSerialized } from './chain.service';
+import { expectContractEvent, getContract, readChainConfig, sendSerialized, toChainError } from './chain.service';
 
 const DOCUMENT_REGISTRY_ABI = [
   'function registerDocument(string documentId, bytes32 documentHash)',
@@ -38,21 +38,38 @@ export interface DocumentRegistration {
  */
 export const registerDocumentHash = (documentId: string, sha256Hash: string): Promise<DocumentRegistration> =>
   sendSerialized(async () => {
-    const { contract, address } = getRegistry();
-    const transaction = await contract.registerDocument(documentId, toBytes32(sha256Hash));
-    const receipt = await transaction.wait();
-    const event = expectContractEvent(receipt, documentRegistryInterface, address, 'DocumentRegistered');
-
-    return {
-      transactionHash: transaction.hash,
-      blockNumber: receipt.blockNumber,
-      registeredAt: new Date(Number(event.args.timestamp) * 1000),
-    };
+    try {
+      return await sendRegistration(documentId, sha256Hash);
+    } catch (error) {
+      // An outage becomes a 503, not a 500. The ingest pipeline rolls back the row and the file on any error.
+      throw toChainError(error);
+    }
   });
+
+const sendRegistration = async (documentId: string, sha256Hash: string): Promise<DocumentRegistration> => {
+  const { contract, address } = getRegistry();
+  const transaction = await contract.registerDocument(documentId, toBytes32(sha256Hash));
+  const receipt = await transaction.wait();
+  const event = expectContractEvent(receipt, documentRegistryInterface, address, 'DocumentRegistered');
+
+  return {
+    transactionHash: transaction.hash,
+    blockNumber: receipt.blockNumber,
+    registeredAt: new Date(Number(event.args.timestamp) * 1000),
+  };
+};
 
 export const getRegisteredDocumentHash = async (documentId: string): Promise<BlockchainDocumentRecord | null> => {
   const { contract } = getRegistry();
-  const [hash, timestamp, uploader] = (await contract.getDocument(documentId)) as [string, bigint, string];
+  let record: [string, bigint, string];
+
+  try {
+    record = (await contract.getDocument(documentId)) as [string, bigint, string];
+  } catch (error) {
+    throw toChainError(error);
+  }
+
+  const [hash, timestamp, uploader] = record;
 
   if (hash.toLowerCase() === ZERO_HASH) {
     return null;

@@ -10,7 +10,7 @@ import { AccessLog, type AuditAction } from '../../src/models/AccessLog';
 import { MedicalDocument, type IMedicalDocument } from '../../src/models/MedicalDocument';
 import type { IUser } from '../../src/models/User';
 import { registerDocumentHash } from '../../src/services/documentRegistry.service';
-import { call, createUser, tokenFor, uniqueSuffix } from '../support/fixtures';
+import { activeLabLink, call, createUser, tokenFor, uniqueSuffix } from '../support/fixtures';
 import { freePort } from '../support/hardhat';
 
 /**
@@ -369,24 +369,60 @@ describe('C25 plaintext never outlives the upload request, whatever fails', () =
     expect(await MedicalDocument.countDocuments()).toBe(rowsBefore);
   });
 
-  it('a chain failure after encryption leaves no plaintext, no ciphertext and no row', async () => {
+  const CHAIN_UNAVAILABLE = { message: 'The blockchain network is unavailable right now. Please try again shortly.' };
+  const outage = async () => vi.stubEnv('BLOCKCHAIN_RPC_URL', `http://127.0.0.1:${await freePort()}`); // nothing listens: a real outage
+
+  it('a chain outage after encryption: a clean 503, and no plaintext, no ciphertext and no row left behind', async () => {
     const before = snapshot();
     const rowsBefore = await MedicalDocument.countDocuments();
 
-    // A real outage: nothing listens on this port. The upload has already been encrypted when the chain call fails.
-    vi.stubEnv('BLOCKCHAIN_RPC_URL', `http://127.0.0.1:${await freePort()}`);
+    await outage(); // the upload has already been encrypted when the chain call fails
     const response = await call('post', '/api/documents/upload', token)
       .field('title', 'During an outage')
       .attach('file', makeFile('application/pdf').bytes, { filename: 'x.pdf', contentType: 'application/pdf' });
 
-    // ENCRYPTION.md §7 promises the cleanup, not a status; see TESTING.md §3.3 for the status observed.
-    expect(response.status).toBeGreaterThanOrEqual(500);
-    expect(response.body.document).toBeUndefined();
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual(CHAIN_UNAVAILABLE); // exactly the message: no stack trace, whatever NODE_ENV says
     expect(newFiles(before)).toEqual([]);
     expect(await MedicalDocument.countDocuments()).toBe(rowsBefore);
 
     // Control: with the chain back, the same upload succeeds.
     vi.unstubAllEnvs();
     await upload(makeFile('application/pdf').bytes);
+  });
+
+  it('a lab report during a chain outage gets the same clean 503 and leaves nothing behind', async () => {
+    const lab = await createUser('lab');
+    await activeLabLink(lab, patient);
+    const before = snapshot();
+
+    await outage();
+    const response = await call('post', '/api/lab/reports', tokenFor(lab))
+      .field('patientId', patient._id.toString())
+      .field('title', 'Report during an outage')
+      .attach('file', makeFile('application/pdf').bytes, { filename: 'r.pdf', contentType: 'application/pdf' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual(CHAIN_UNAVAILABLE);
+    expect(newFiles(before)).toEqual([]);
+    expect(await MedicalDocument.countDocuments({ uploadedByLab: lab._id })).toBe(0);
+  });
+
+  it('during an outage documents are still served, integrity says 503, and nothing is recorded as tampering', async () => {
+    const { bytes } = makeFile('application/pdf');
+    const { id } = await upload(bytes);
+    const failuresBefore = (await failureRows(id)).length;
+    const verifiedBefore = await auditCount(id, 'INTEGRITY_VERIFIED');
+
+    await outage();
+    const served = await fetchRaw(`/api/documents/${id}/view`);
+    expect(served.status).toBe(200); // reading comes from the vault, never from the chain
+    expect(served.bytes.equals(bytes)).toBe(true);
+
+    const integrity = await call('get', `/api/documents/${id}/integrity`, token);
+    expect(integrity.status).toBe(503);
+    expect(integrity.body).toEqual(CHAIN_UNAVAILABLE);
+    expect((await failureRows(id)).length).toBe(failuresBefore); // an outage is not an integrity failure
+    expect(await auditCount(id, 'INTEGRITY_VERIFIED')).toBe(verifiedBefore); // and nothing was verified
   });
 });

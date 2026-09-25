@@ -30,6 +30,47 @@ export class ChainNotConfiguredError extends Error {
   }
 }
 
+export const CHAIN_UNAVAILABLE_MESSAGE = 'The blockchain network is unavailable right now. Please try again shortly.';
+
+/**
+ * 503 for callers: the chain is configured but could not be reached (node down, connection refused, timeout).
+ * An outage is an expected operational state — the request fails cleanly and says so; it is never a 500.
+ */
+export class ChainUnavailableError extends Error {
+  readonly statusCode = 503;
+
+  /** The underlying socket / provider error, kept for logs; never sent to the client. */
+  constructor(readonly cause: unknown) {
+    super(CHAIN_UNAVAILABLE_MESSAGE);
+    this.name = 'ChainUnavailableError';
+  }
+}
+
+const UNREACHABLE_SYSTEM_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE']);
+const UNREACHABLE_ETHERS_CODES = new Set(['NETWORK_ERROR', 'TIMEOUT']);
+
+/**
+ * True when an error means the node could not be reached at all — as opposed to a transaction that reverted or was
+ * rejected, which is a real failure and stays one. Follows `cause` / ethers' wrapped `error`, since the socket error
+ * is often a few layers down.
+ */
+export const isChainUnreachable = (error: unknown): boolean => {
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 5 && typeof current === 'object' && current !== null; depth += 1) {
+    const code: unknown = Reflect.get(current, 'code');
+    if (typeof code === 'string' && (UNREACHABLE_SYSTEM_CODES.has(code) || UNREACHABLE_ETHERS_CODES.has(code))) {
+      return true;
+    }
+    current = Reflect.get(current, 'cause') ?? Reflect.get(current, 'error');
+  }
+
+  return false;
+};
+
+/** Re-throws an unreachable-node error as ChainUnavailableError (503); anything else unchanged. */
+export const toChainError = (error: unknown): unknown => (isChainUnreachable(error) ? new ChainUnavailableError(error) : error);
+
 export interface ChainConfig {
   rpcUrl?: string;
   privateKey?: string;
