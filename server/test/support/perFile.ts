@@ -1,6 +1,5 @@
 import { randomBytes } from 'crypto';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, inject } from 'vitest';
@@ -19,7 +18,7 @@ import { buildTestEnvironment } from './testEnv';
  */
 
 const originalCwd = process.cwd();
-const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'jeevanlocker-test-'));
+const workspace = fs.mkdtempSync(path.join(inject('workspaceRoot'), 'file-'));
 process.chdir(workspace);
 
 const chain = inject('chain');

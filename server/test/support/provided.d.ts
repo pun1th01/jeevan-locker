@@ -8,6 +8,8 @@ declare module 'vitest' {
       /** Funded Hardhat account keys; index 0 deployed the contracts, index N belongs to worker N. */
       accountKeys: string[];
     };
+    /** Temp directory for this run; every file's workspace is created inside it and teardown deletes it whole. */
+    workspaceRoot: string;
     /** Base URI of the run's one mongod, e.g. mongodb://127.0.0.1:51234/ — each file appends its own database. */
     mongoBaseUri: string;
   }
