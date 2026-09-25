@@ -907,32 +907,20 @@ const ensureDemoDocument = async (
     ...(testValues ? { testValues } : {}),
   };
 
-  if (!existingDocument) {
-    const createdDocument = await MedicalDocument.create({ _id: documentId, ...documentPayload });
-    await MedicalDocument.updateOne(
-      { _id: createdDocument._id },
-      {
-        $set: {
-          createdAt: documentSeed.createdAt,
-          updatedAt: documentSeed.createdAt,
-        },
-      },
-      { timestamps: false }
-    );
+  // The seeded dates must survive. With schema timestamps, `createdAt` is immutable: an update that sets it is
+  // silently dropped unless it says overwriteImmutable (that is why every demo document used to show today's date).
+  // A new row takes the dates at creation, which the timestamps plugin respects.
+  const seededDates = { createdAt: documentSeed.createdAt, updatedAt: documentSeed.createdAt };
 
+  if (!existingDocument) {
+    const createdDocument = await MedicalDocument.create({ _id: documentId, ...documentPayload, ...seededDates });
     return (await MedicalDocument.findById(createdDocument._id)) ?? createdDocument;
   }
 
   await MedicalDocument.updateOne(
     { _id: existingDocument._id },
-    {
-      $set: {
-        ...documentPayload,
-        createdAt: documentSeed.createdAt,
-        updatedAt: documentSeed.createdAt,
-      },
-    },
-    { timestamps: false }
+    { $set: { ...documentPayload, ...seededDates } },
+    { timestamps: false, overwriteImmutable: true }
   );
 
   return (await MedicalDocument.findById(existingDocument._id)) ?? existingDocument;
