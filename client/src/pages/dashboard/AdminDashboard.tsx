@@ -409,7 +409,12 @@ export default function AdminDashboard() {
                       <p className="mt-3 text-sm font-semibold text-white">{log.user.name}</p>
                       <p className="mt-1 text-xs leading-5 text-slate-400">{actionDescriptions[log.action]}</p>
                       {log.targetDocument ? (
-                        <p className="mt-2 truncate text-xs text-slate-300">{log.targetDocument.title}</p>
+                        <p className="mt-2 flex min-w-0 items-center gap-2 text-xs text-slate-300">
+                          <span className="truncate">{log.targetDocument.title}</span>
+                          {log.targetDocument.deletedAt ? (
+                            <span className="shrink-0 rounded bg-rose-400/15 px-1.5 py-0.5 font-semibold text-rose-100">Deleted by patient</span>
+                          ) : null}
+                        </p>
                       ) : null}
                       {log.metadata?.reason ? (
                         <p className="mt-2 text-xs leading-5 text-rose-100/90">Reason: {log.metadata.reason}</p>
@@ -492,7 +497,10 @@ export default function AdminDashboard() {
               </span>
               <span className="text-lg font-semibold text-white">{summary?.totalDocuments ?? 0}</span>
             </div>
-            <p className="mt-1 text-xs text-slate-500">Uploaded medical records</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Uploaded medical records
+              {summary?.deletedDocuments ? ` · ${summary.deletedDocuments} deleted by patients (kept, flagged)` : ''}
+            </p>
           </div>
         </div>
       </div>

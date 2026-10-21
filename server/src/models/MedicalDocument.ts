@@ -1,5 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import type { DocumentEncryption } from '../services/documentCrypto.service';
+import { anchorReferenceSchema, type AnchorReference } from './ConsentGrant';
 
 export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
@@ -57,6 +58,15 @@ export interface IMedicalDocument extends Document {
   hospitalName?: string;
   reportDate?: Date;
   testValues?: ITestValue[];
+  /**
+   * Soft delete by the owning patient (DELETE /documents/:id). The row, the encrypted file and the on-chain
+   * registration all stay; the document is hidden from the patient and every doctor, while admins see it flagged
+   * and the issuing lab keeps its own report. Set once, never cleared. See docs/API_DOCUMENTS.md §5.
+   */
+  deletedAt?: Date;
+  deletedBy?: Types.ObjectId;
+  /** On-chain proof of the deletion, written back by the anchor worker (docs/ANCHORING.md). */
+  anchors?: { deleted?: AnchorReference };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -166,6 +176,12 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
     hospitalName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
     reportDate: Date,
     testValues: { type: [testValueSchema], default: undefined },
+    deletedAt: { type: Date, default: undefined },
+    deletedBy: { type: Schema.Types.ObjectId, ref: 'User', default: undefined },
+    anchors: {
+      type: new Schema({ deleted: { type: anchorReferenceSchema, default: undefined } }, { _id: false }),
+      default: undefined,
+    },
   },
   {
     timestamps: true,

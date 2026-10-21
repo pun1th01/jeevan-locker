@@ -127,7 +127,7 @@ export const lookupPatient: RequestHandler = asyncHandler(async (req, res) => {
 
   const { patient } = outcome;
 
-  const documents = await MedicalDocument.find({ uploadedBy: patient._id })
+  const documents = await MedicalDocument.find({ uploadedBy: patient._id, deletedAt: null })
     .sort({ createdAt: -1 })
     .select('title createdAt sharedWithDoctors');
   const accessByDocument = await resolvePatientAccess(doctor.id, documents);

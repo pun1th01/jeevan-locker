@@ -21,8 +21,6 @@ import type { EmergencyAccess } from '../../types/emergencyAccess';
 // Server limits for PATCH /documents/:id/metadata (docs/API_DOCUMENTS.md).
 const TITLE_MAX_LENGTH = 120;
 const DESCRIPTION_MAX_LENGTH = 500;
-// DELETE /documents/:id does not exist yet; the button and its dialog stay in place behind this flag.
-const DOCUMENT_DELETION_ENABLED = false;
 
 export default function PatientDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -469,12 +467,10 @@ export default function PatientDashboard() {
                   <Pencil className="h-4 w-4" />
                   Edit metadata
                 </Button>
-                {DOCUMENT_DELETION_ENABLED ? (
-                  <Button type="button" size="sm" variant="destructive" onClick={() => setDocumentPendingDeletion(selectedDocument)}>
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </Button>
-                ) : null}
+                <Button type="button" size="sm" variant="destructive" onClick={() => setDocumentPendingDeletion(selectedDocument)}>
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </Button>
               </div>
             ) : null}
           </div>
@@ -610,9 +606,13 @@ export default function PatientDashboard() {
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-300/20 bg-slate-900 p-6 shadow-2xl">
             <Dialog.Title className="flex items-center gap-2 text-lg font-semibold text-white"><AlertTriangle className="h-5 w-5 text-rose-300" />Delete document?</Dialog.Title>
             <Dialog.Description className="mt-3 rounded-md border border-rose-300/25 bg-rose-300/10 p-3 text-sm leading-6 text-rose-100">
-              The cryptographic hash permanently remains recorded on the blockchain. This action only hides the document from standard vault lists.
+              Every doctor loses access now: direct shares, approved consents and live emergency access all end, and pending requests are closed.
+              It cannot be undone.
             </Dialog.Description>
-            <p className="mt-3 text-sm leading-6 text-slate-400">The original file and audit trail are retained for integrity and compliance records.</p>
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              The document&rsquo;s hash stays on the blockchain, the deletion itself is recorded there, and the encrypted file and audit trail are kept
+              for integrity and compliance. A lab keeps the reports it issued.
+            </p>
             {managementError ? <p className="mt-3 text-sm text-rose-200">{managementError}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <Dialog.Close asChild>

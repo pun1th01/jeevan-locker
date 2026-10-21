@@ -32,8 +32,18 @@ const formatDateTime = (value: string) =>
 const short = (hex: string | null | undefined, keep = 10) => (hex ? `${hex.slice(0, keep)}…${hex.slice(-6)}` : '—');
 
 const describeRecord = (anchor: ChainAnchorRow) => {
-  const who = anchor.recordType === 'consent' ? `${anchor.record.doctorName ?? 'doctor'} ↔ ${anchor.record.patientName ?? 'patient'}` : `${anchor.record.doctorName ?? 'doctor'} → ${anchor.record.patientName ?? 'patient'}`;
-  return `${anchor.recordType === 'consent' ? 'Consent' : 'Emergency'} ${anchor.event.toLowerCase()} · ${who} · ${anchor.record.documentTitle ?? 'document'}`;
+  const document = anchor.record.documentTitle ?? 'document';
+  const doctor = anchor.record.doctorName ?? 'doctor';
+  const patient = anchor.record.patientName ?? 'patient';
+
+  switch (anchor.recordType) {
+    case 'consent':
+      return `Consent ${anchor.event.toLowerCase()} · ${doctor} ↔ ${patient} · ${document}`;
+    case 'emergency':
+      return `Emergency ${anchor.event.toLowerCase()} · ${doctor} → ${patient} · ${document}`;
+    case 'document':
+      return `Document deleted · by ${patient} · ${document}`;
+  }
 };
 
 interface DigestCardProps {

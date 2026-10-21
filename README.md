@@ -122,6 +122,7 @@ See [API_ADMIN.md](docs/API_ADMIN.md) for full endpoint details.
 | PATCH | `/:id/share` | Patient | Direct share with a doctor |
 | PATCH | `/:id/unshare` | Patient (owner) | Remove one doctor's direct share |
 | PATCH | `/:id/metadata` | Patient (owner) | Change the title or description |
+| DELETE | `/:id` | Patient (owner) | Soft delete: ends every doctor's access, anchored on-chain |
 
 See [API_DOCUMENTS.md](docs/API_DOCUMENTS.md) for the document-management rules.
 

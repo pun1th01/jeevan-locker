@@ -1,8 +1,10 @@
 import type { RequestHandler } from 'express';
 import { Types } from 'mongoose';
 import {
+  ANCHOR_RECORD_TYPES,
   CHAIN_ANCHOR_STATUSES,
   ChainAnchor,
+  type AnchorRecordType,
   type ChainAnchorStatus,
   type ConsentAnchorEvent,
   type EmergencyAnchorEvent,
@@ -12,7 +14,7 @@ import { ConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess } from '../models/EmergencyAccess';
 import { MedicalDocument } from '../models/MedicalDocument';
 import { User } from '../models/User';
-import { buildConsentPreimage, buildEmergencyPreimage, sha256Hex } from '../services/anchorPreimage.service';
+import { buildConsentPreimage, buildDocumentDeletedPreimage, buildEmergencyPreimage, sha256Hex } from '../services/anchorPreimage.service';
 import { retryAnchor } from '../services/anchorQueue.service';
 import { anchorKeyFor, getAnchor, type OnChainAnchor } from '../services/auditAnchor.service';
 import { asyncHandler } from '../utils/asyncHandler.util';
@@ -22,7 +24,7 @@ export interface AnchorResponse {
   id: string;
   key: string;
   onChainKey: string;
-  recordType: 'consent' | 'emergency';
+  recordType: AnchorRecordType;
   recordId: string;
   event: IChainAnchor['event'];
   status: ChainAnchorStatus;
@@ -79,13 +81,24 @@ interface RecordContext {
 }
 
 const loadRecordContext = async (anchor: IChainAnchor): Promise<RecordContext | null> => {
-  if (anchor.recordType === 'consent') {
-    const consent = await ConsentGrant.findById(anchor.recordId).select('patientId doctorId documentId');
-    return consent ? { patientId: consent.patientId, doctorId: consent.doctorId, documentId: consent.documentId } : null;
+  switch (anchor.recordType) {
+    case 'consent': {
+      const consent = await ConsentGrant.findById(anchor.recordId).select('patientId doctorId documentId');
+      return consent ? { patientId: consent.patientId, doctorId: consent.doctorId, documentId: consent.documentId } : null;
+    }
+    case 'emergency': {
+      const grant = await EmergencyAccess.findById(anchor.recordId).select('patientId doctorId documentId');
+      return grant ? { patientId: grant.patientId, doctorId: grant.doctorId, documentId: grant.documentId } : null;
+    }
+    case 'document': {
+      const document = await MedicalDocument.findById(anchor.recordId).select('uploadedBy');
+      return document ? { patientId: document.uploadedBy, documentId: document._id } : null;
+    }
+    default: {
+      const unhandled: never = anchor.recordType;
+      throw new Error(`Unknown anchor record type ${String(unhandled)}`);
+    }
   }
-
-  const grant = await EmergencyAccess.findById(anchor.recordId).select('patientId doctorId documentId');
-  return grant ? { patientId: grant.patientId, doctorId: grant.doctorId, documentId: grant.documentId } : null;
 };
 
 const serializeAnchor = async (anchor: IChainAnchor, context: RecordContext | null): Promise<AnchorResponse> => {
@@ -125,7 +138,7 @@ const serializeAnchor = async (anchor: IChainAnchor, context: RecordContext | nu
 };
 
 /**
- * GET /api/admin/anchors?status=PENDING|ANCHORED|FAILED&recordType=consent|emergency&limit=50
+ * GET /api/admin/anchors?status=PENDING|ANCHORED|FAILED&recordType=consent|emergency|document&limit=50
  * Newest first, plus counts by status for the panel header.
  */
 export const listAnchors: RequestHandler = asyncHandler(async (req, res) => {
@@ -143,8 +156,8 @@ export const listAnchors: RequestHandler = asyncHandler(async (req, res) => {
   }
 
   if (recordType) {
-    if (recordType !== 'consent' && recordType !== 'emergency') {
-      res.status(400).json({ message: 'recordType must be consent or emergency' });
+    if (!(ANCHOR_RECORD_TYPES as readonly string[]).includes(recordType)) {
+      res.status(400).json({ message: 'recordType must be consent, emergency or document' });
       return;
     }
     filter.recordType = recordType;
@@ -168,16 +181,26 @@ export const listAnchors: RequestHandler = asyncHandler(async (req, res) => {
 
 /** Rebuilds the preimage from the current record, exactly as the enqueue did. */
 const recomputePreimage = async (anchor: IChainAnchor): Promise<string | null> => {
-  const document = await MedicalDocument.findById(anchor.documentId).select('documentHash');
+  const document = await MedicalDocument.findById(anchor.documentId).select('uploadedBy documentHash deletedAt deletedBy');
   const documentHash = document?.documentHash ?? null;
 
-  if (anchor.recordType === 'consent') {
-    const consent = await ConsentGrant.findById(anchor.recordId);
-    return consent ? buildConsentPreimage(consent, anchor.event as ConsentAnchorEvent, documentHash) : null;
+  switch (anchor.recordType) {
+    case 'consent': {
+      const consent = await ConsentGrant.findById(anchor.recordId);
+      return consent ? buildConsentPreimage(consent, anchor.event as ConsentAnchorEvent, documentHash) : null;
+    }
+    case 'emergency': {
+      const grant = await EmergencyAccess.findById(anchor.recordId);
+      return grant ? buildEmergencyPreimage(grant, anchor.event as EmergencyAnchorEvent, documentHash) : null;
+    }
+    case 'document':
+      // The record IS the document (recordId === documentId).
+      return document ? buildDocumentDeletedPreimage(document) : null;
+    default: {
+      const unhandled: never = anchor.recordType;
+      throw new Error(`Unknown anchor record type ${String(unhandled)}`);
+    }
   }
-
-  const grant = await EmergencyAccess.findById(anchor.recordId);
-  return grant ? buildEmergencyPreimage(grant, anchor.event as EmergencyAnchorEvent, documentHash) : null;
 };
 
 const differingFields = (stored: string, recomputed: string | null): string[] => {

@@ -119,7 +119,8 @@ export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
 
   const [patient, document] = await Promise.all([
     User.findOne({ _id: patientId, role: 'patient' }),
-    MedicalDocument.findById(documentId),
+    // A document its patient deleted cannot be asked for: to a doctor it no longer exists.
+    MedicalDocument.findOne({ _id: documentId, deletedAt: null }),
   ]);
   if (!patient) {
     res.status(404).json({ message: 'Patient not found' });

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  deleteDocument,
   downloadDocument,
   getDocument,
   getMyDocuments,
@@ -28,5 +29,6 @@ router.get('/:id', getDocument);
 router.patch('/:id/share', requireRole('patient'), shareDocumentWithDoctor);
 router.patch('/:id/unshare', requireRole('patient'), unshareDocumentFromDoctor);
 router.patch('/:id/metadata', requireRole('patient'), updateDocumentMetadata);
+router.delete('/:id', requireRole('patient'), deleteDocument);
 
 export default router;

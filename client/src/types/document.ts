@@ -46,6 +46,8 @@ export interface MedicalDocument {
   /** ISO 8601 */
   reportDate?: string;
   testValues?: TestValue[];
+  /** Admins only: when the owning patient soft-deleted the document. Every other reader never receives a deleted one. */
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

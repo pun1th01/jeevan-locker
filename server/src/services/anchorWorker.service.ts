@@ -1,6 +1,7 @@
 import { ChainAnchor, type IChainAnchor } from '../models/ChainAnchor';
 import { ConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess } from '../models/EmergencyAccess';
+import { MedicalDocument } from '../models/MedicalDocument';
 import { createAuditLog } from '../utils/audit.util';
 import { SYSTEM_IP_ADDRESS } from '../utils/emergencyAccess.util';
 import { anchorDigest, findAnchoredEvent, getAnchor, type AnchorResult } from './auditAnchor.service';
@@ -35,15 +36,26 @@ export const backoffMs = (attempts: number, config = readWorkerConfig()) =>
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 1000);
 
-/** Copies the on-chain proof onto the consent / emergency record (write-once, keyed by event). */
+/** Copies the on-chain proof onto the consent / emergency / document record (write-once, keyed by event). */
 const writeBackToRecord = async (anchor: IChainAnchor, result: AnchorResult) => {
   const reference = { digest: anchor.digest, txHash: result.transactionHash, blockNumber: result.blockNumber, anchoredAt: result.anchoredAt };
   const field = `anchors.${anchor.event.toLowerCase()}`;
 
-  if (anchor.recordType === 'consent') {
-    await ConsentGrant.updateOne({ _id: anchor.recordId }, { $set: { [field]: reference } });
-  } else {
-    await EmergencyAccess.updateOne({ _id: anchor.recordId }, { $set: { [field]: reference } });
+  switch (anchor.recordType) {
+    case 'consent':
+      await ConsentGrant.updateOne({ _id: anchor.recordId }, { $set: { [field]: reference } });
+      return;
+    case 'emergency':
+      await EmergencyAccess.updateOne({ _id: anchor.recordId }, { $set: { [field]: reference } });
+      return;
+    case 'document':
+      // timestamps: false — recording the proof is not an edit to the document.
+      await MedicalDocument.updateOne({ _id: anchor.recordId }, { $set: { [field]: reference } }, { timestamps: false });
+      return;
+    default: {
+      const unhandled: never = anchor.recordType;
+      throw new Error(`Unknown anchor record type ${String(unhandled)}`);
+    }
   }
 };
 

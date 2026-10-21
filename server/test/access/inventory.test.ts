@@ -57,6 +57,7 @@ const ROUTES: readonly RouteSpec[] = [
   { method: 'patch', path: '/api/documents/:id/share', access: ['patient'] },
   { method: 'patch', path: '/api/documents/:id/unshare', access: ['patient'] },
   { method: 'patch', path: '/api/documents/:id/metadata', access: ['patient'] },
+  { method: 'delete', path: '/api/documents/:id', access: ['patient'] },
 
   { method: 'post', path: '/api/emergency-access', access: ['doctor'] },
   { method: 'get', path: '/api/emergency-access', access: ['patient', ...DOCTOR_ANY_VERIFICATION] },

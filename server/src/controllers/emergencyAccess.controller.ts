@@ -112,7 +112,8 @@ export const grantEmergencyAccess: RequestHandler = asyncHandler(async (req, res
 
   const [patient, document] = await Promise.all([
     User.findOne({ _id: patientId, role: 'patient' }),
-    MedicalDocument.findById(documentId),
+    // A deleted document cannot be broken into: to a doctor it no longer exists.
+    MedicalDocument.findOne({ _id: documentId, deletedAt: null }),
   ]);
 
   if (!patient) {

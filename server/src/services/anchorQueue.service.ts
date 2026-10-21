@@ -1,14 +1,17 @@
 import { Types } from 'mongoose';
-import { ChainAnchor, type ConsentAnchorEvent, type EmergencyAnchorEvent, type IChainAnchor } from '../models/ChainAnchor';
+import { ChainAnchor, type AnchorRecordType, type ConsentAnchorEvent, type EmergencyAnchorEvent, type IChainAnchor } from '../models/ChainAnchor';
 import { ConsentGrant, type IConsentGrant } from '../models/ConsentGrant';
 import { EmergencyAccess, type IEmergencyAccess } from '../models/EmergencyAccess';
-import { MedicalDocument } from '../models/MedicalDocument';
+import { MedicalDocument, type IMedicalDocument } from '../models/MedicalDocument';
 import {
   buildConsentPreimage,
+  buildDocumentDeletedPreimage,
   buildEmergencyPreimage,
   consentEventActor,
   consentEventsReached,
   consentRecordKey,
+  documentEventActor,
+  documentRecordKey,
   emergencyEventActor,
   emergencyEventsReached,
   emergencyRecordKey,
@@ -25,7 +28,7 @@ type EnqueueSource = 'controller' | 'reconciliation';
 
 interface EnqueueInput {
   key: string;
-  recordType: 'consent' | 'emergency';
+  recordType: AnchorRecordType;
   recordId: Types.ObjectId;
   event: IChainAnchor['event'];
   actorUserId: Types.ObjectId;
@@ -106,9 +109,36 @@ export const enqueueEmergencyAnchor = async (
   return inserted;
 };
 
+/** The deletion of a document by its patient. Its only event is DELETED; returns false if already queued. */
+export const enqueueDocumentDeletedAnchor = async (
+  document: Pick<IMedicalDocument, '_id' | 'uploadedBy' | 'documentHash' | 'deletedAt' | 'deletedBy'>,
+  source: EnqueueSource = 'controller'
+): Promise<boolean> => {
+  const preimage = buildDocumentDeletedPreimage(document);
+
+  if (!preimage) {
+    return false;
+  }
+
+  const inserted = await insertIfMissing({
+    key: documentRecordKey(document._id.toString(), 'DELETED'),
+    recordType: 'document',
+    recordId: document._id,
+    event: 'DELETED',
+    actorUserId: documentEventActor(document),
+    documentId: document._id,
+    preimage,
+    source,
+  });
+
+  if (inserted) wakeAnchorWorker();
+  return inserted;
+};
+
 export interface ReconciliationReport {
   consentsScanned: number;
   grantsScanned: number;
+  deletedDocumentsScanned: number;
   enqueued: number;
   windowDays: number;
 }
@@ -128,10 +158,12 @@ export const reconcileMissingAnchors = async (log: (message: string) => void = c
   const since = windowDays > 0 ? new Date(Date.now() - windowDays * 86_400_000) : null;
   const consentFilter = since ? { requestedAt: { $gte: since } } : {};
   const grantFilter = since ? { createdAt: { $gte: since } } : {};
+  const deletedFilter = since ? { deletedAt: { $gte: since } } : { deletedAt: { $ne: null } };
 
-  const [consents, grants, existingKeys] = await Promise.all([
+  const [consents, grants, deletedDocuments, existingKeys] = await Promise.all([
     ConsentGrant.find(consentFilter).select('patientId doctorId documentId purpose requestedAt approvedAt rejectedAt revokedAt'),
     EmergencyAccess.find(grantFilter).select('doctorId patientId documentId reason createdAt expiresAt revokedAt revokedBy'),
+    MedicalDocument.find(deletedFilter).select('uploadedBy documentHash deletedAt deletedBy'),
     ChainAnchor.find({}).select('key').lean(),
   ]);
   const known = new Set(existingKeys.map((row) => row.key));
@@ -167,8 +199,19 @@ export const reconcileMissingAnchors = async (log: (message: string) => void = c
     }
   }
 
-  log(`[anchors] reconciliation: ${consents.length} consents, ${grants.length} grants scanned${since ? ` (last ${windowDays} days)` : ''}, ${enqueued} anchor(s) enqueued`);
-  return { consentsScanned: consents.length, grantsScanned: grants.length, enqueued, windowDays };
+  for (const document of deletedDocuments) {
+    const key = documentRecordKey(document._id.toString(), 'DELETED');
+
+    if (!known.has(key) && (await enqueueDocumentDeletedAnchor(document, 'reconciliation'))) {
+      enqueued += 1;
+      log(`[anchors] reconciliation enqueued ${key}`);
+    }
+  }
+
+  log(
+    `[anchors] reconciliation: ${consents.length} consents, ${grants.length} grants, ${deletedDocuments.length} deleted documents scanned${since ? ` (last ${windowDays} days)` : ''}, ${enqueued} anchor(s) enqueued`
+  );
+  return { consentsScanned: consents.length, grantsScanned: grants.length, deletedDocumentsScanned: deletedDocuments.length, enqueued, windowDays };
 };
 
 /** Admin action: put a FAILED (or stuck PENDING) row back at the front of the queue. */

@@ -37,6 +37,8 @@ export interface AuditDocumentSummary {
   title: string;
   originalFileName: string;
   createdAt: string;
+  /** Set when the owning patient soft-deleted the document. */
+  deletedAt?: string;
 }
 
 export interface AuditLogEntry {
@@ -51,6 +53,9 @@ export interface AuditLogEntry {
 
 export interface AuditSummary {
   totalUsers: number;
+  /** Documents not deleted by their patient. */
   totalDocuments: number;
+  /** Documents soft-deleted by their patient; still held, flagged, for admins. */
+  deletedDocuments: number;
   recentActivity: AuditLogEntry[];
 }

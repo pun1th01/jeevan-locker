@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
-import type { ConsentAnchorEvent, EmergencyAnchorEvent } from '../models/ChainAnchor';
+import type { ConsentAnchorEvent, DocumentAnchorEvent, EmergencyAnchorEvent } from '../models/ChainAnchor';
 import type { IConsentGrant } from '../models/ConsentGrant';
 import type { IEmergencyAccess } from '../models/EmergencyAccess';
+import type { IMedicalDocument } from '../models/MedicalDocument';
 
 /**
  * Canonical preimages for anchored audit events. The digest that goes on-chain is
@@ -28,6 +29,7 @@ export const consentEventActor = (consent: Pick<IConsentGrant, 'patientId' | 'do
 
 export const consentRecordKey = (consentId: string, event: ConsentAnchorEvent) => `consent:${consentId}:${event}`;
 export const emergencyRecordKey = (emergencyAccessId: string, event: EmergencyAnchorEvent) => `emergency:${emergencyAccessId}:${event}`;
+export const documentRecordKey = (documentId: string, event: DocumentAnchorEvent) => `document:${documentId}:${event}`;
 
 export const sha256Hex = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 
@@ -122,6 +124,34 @@ export const emergencyEventsReached = (grant: Pick<IEmergencyAccess, 'revokedAt'
 /** Who caused each emergency event — the audit actor for a failed anchor. */
 export const emergencyEventActor = (grant: Pick<IEmergencyAccess, 'doctorId' | 'patientId'>, event: EmergencyAnchorEvent) =>
   event === 'GRANTED' ? grant.doctorId : grant.patientId;
+
+type DocumentDeletionFields = Pick<IMedicalDocument, '_id' | 'uploadedBy' | 'documentHash' | 'deletedAt' | 'deletedBy'>;
+
+/**
+ * DELETED preimage: a patient soft-deleted a document. An additional record type, not a change to any existing
+ * preimage, so PREIMAGE_VERSION stays 1 and every earlier anchor still verifies. `documentHash` is the document's
+ * own plaintext hash, the value its DocumentRegistry record keeps on-chain after the deletion. `deletedBy` and
+ * `deletedAt` are set once. Returns null until the document is deleted.
+ */
+export const buildDocumentDeletedPreimage = (document: DocumentDeletionFields): string | null => {
+  if (!document.deletedAt || !document.deletedBy) {
+    return null;
+  }
+
+  return JSON.stringify({
+    v: PREIMAGE_VERSION,
+    type: 'document',
+    event: 'DELETED',
+    documentId: document._id.toString(),
+    patientId: document.uploadedBy.toString(),
+    documentHash: document.documentHash ? document.documentHash.toLowerCase() : null,
+    deletedBy: document.deletedBy.toString(),
+    deletedAt: document.deletedAt.toISOString(),
+  });
+};
+
+/** Who caused the document event — the patient who deleted it. */
+export const documentEventActor = (document: Pick<IMedicalDocument, 'uploadedBy' | 'deletedBy'>) => document.deletedBy ?? document.uploadedBy;
 
 /** Which consent events a record has actually reached — what the reconciliation sweep expects to find anchored. */
 export const consentEventsReached = (consent: Pick<IConsentGrant, 'requestedAt' | 'approvedAt' | 'rejectedAt' | 'revokedAt'>): ConsentAnchorEvent[] => {

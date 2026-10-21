@@ -27,6 +27,7 @@ import { getRegisteredDocumentHash } from '../services/documentRegistry.service'
 import { DocumentIngestError, discardUploadedFile, ingestUploadedDocument } from '../services/documentIngest.service';
 import { hashPlaintextFile, openDecryptedStream, verifyEncryptedFile, VaultFileError } from '../services/documentCrypto.service';
 import { emitAppEvent, eventBase } from '../events/appEvents';
+import { deleteDocumentForPatient } from '../services/documentDeletion.service';
 
 /** Projection for every populated user reference in document responses. Must cover everything SafeUser needs. */
 export const USER_REFERENCE_FIELDS = 'name email role verified organisation createdAt';
@@ -76,6 +77,8 @@ export interface MedicalDocumentResponse {
   hospitalName?: string;
   reportDate?: string;
   testValues?: ITestValue[];
+  /** Admins only: when the owning patient soft-deleted the document. */
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -170,6 +173,8 @@ export const serializeMedicalDocument = (document: IMedicalDocument, viewer: Use
     blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
     encryptedAtRest: Boolean(document.encryption),
     ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers) : {}),
+    // The flag is for admins only: the issuing lab, which also still reads a deleted report, is not told.
+    ...(document.deletedAt && viewer === 'admin' ? { deletedAt: document.deletedAt.toISOString() } : {}),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -251,6 +256,12 @@ const getDocumentAccessDecision = async (
   user: SafeUser,
   document: IMedicalDocument
 ): Promise<DocumentAccessDecision> => {
+  // A soft-deleted document reaches only the readers seesDeletedDocuments names; the lookup already returns 404 to
+  // everyone else, and this keeps the rule true for any caller that loads the document some other way.
+  if (document.deletedAt && !seesDeletedDocuments(user.role)) {
+    return { allowed: false };
+  }
+
   switch (user.role) {
     case 'admin':
       return { allowed: true, method: 'admin' };
@@ -326,12 +337,33 @@ const getDocumentAccessAuditMetadata = (
 };
 
 
-const getDocumentByValidatedId = async (documentId: string) => {
+/**
+ * Whether a soft-deleted document still exists for this reader. For the patient who deleted it and for every doctor
+ * it is gone: 404, exactly like an id that never existed. An admin sees it, flagged. The issuing lab keeps its own
+ * report, for the reason it keeps one after a link is revoked: a lab must be able to stand behind what it signed.
+ * Exhaustive over the roles.
+ */
+const seesDeletedDocuments = (viewer: UserRole): boolean => {
+  switch (viewer) {
+    case 'admin':
+    case 'lab':
+      return true;
+    case 'patient':
+    case 'doctor':
+      return false;
+    default: {
+      const unhandled: never = viewer;
+      return Boolean(unhandled);
+    }
+  }
+};
+
+const getDocumentByValidatedId = async (documentId: string, viewer: UserRole) => {
   if (!Types.ObjectId.isValid(documentId)) {
     return null;
   }
 
-  return MedicalDocument.findById(documentId);
+  return MedicalDocument.findOne({ _id: documentId, ...(seesDeletedDocuments(viewer) ? {} : { deletedAt: null }) });
 };
 
 const getStringParam = (value: string | string[] | undefined): string => {
@@ -372,7 +404,7 @@ const streamDocumentFile = async (
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -565,7 +597,7 @@ const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unkn
       return {};
 
     case 'patient':
-      return { uploadedBy: user.id };
+      return { uploadedBy: user.id, deletedAt: null };
 
     case 'lab':
       return { uploadedByLab: user.id };
@@ -579,6 +611,7 @@ const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unkn
       ]);
 
       return {
+        deletedAt: null,
         $or: [
           { sharedWithDoctors: user.id },
           { _id: { $in: approvedConsents.map((consent) => consent.documentId) } },
@@ -626,7 +659,7 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
   }
 
   const documentId = getStringParam(req.params.id);
-  const document = await getDocumentByValidatedId(documentId);
+  const document = await getDocumentByValidatedId(documentId, user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -668,7 +701,7 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
     return;
@@ -753,7 +786,7 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -835,7 +868,7 @@ export const unshareDocumentFromDoctor: RequestHandler = asyncHandler(async (req
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -911,7 +944,7 @@ export const updateDocumentMetadata: RequestHandler = asyncHandler(async (req, r
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -957,4 +990,47 @@ export const updateDocumentMetadata: RequestHandler = asyncHandler(async (req, r
   });
 
   await respondWithDocument(res, document._id, user.role, 'Document details updated');
+});
+
+export const DOCUMENT_DELETED_MESSAGE =
+  'Document deleted. Doctors can no longer open it; its hash stays on the blockchain and the audit trail is kept.';
+
+/**
+ * DELETE /documents/:id   (patient, owner)
+ * Soft delete: see services/documentDeletion.service.ts for the cascade and docs/API_DOCUMENTS.md §5. A document the
+ * patient already deleted is not found — it no longer exists for them — and so is the loser of two concurrent deletes.
+ */
+export const deleteDocument: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can delete this document' });
+    return;
+  }
+
+  const deletion = await deleteDocumentForPatient(document._id, user, getRequestIpAddress(req));
+
+  if (!deletion) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  res.json({
+    message: DOCUMENT_DELETED_MESSAGE,
+    consentsRevoked: deletion.consentsRevoked,
+    consentsRejected: deletion.consentsRejected,
+    grantsRevoked: deletion.grantsRevoked,
+  });
 });

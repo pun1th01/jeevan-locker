@@ -172,7 +172,7 @@ Every **served** read writes one row — `DOCUMENT_ACCESS` (`GET /documents/:id`
 
 Every such row also carries `patientId` (the document's owner); `INTEGRITY_VERIFIED` adds `integrityVerified: 'true' | 'false'`. A refused read writes no row. Rows written before this field existed (on a persistent database) have no `accessMethod`. See [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) for consents and grants.
 
-All 27 audit actions are in `server/src/models/AccessLog.ts` (mirrored in `client/src/types/audit.ts`) and rendered by the admin dashboard from `GET /api/audit/summary` (last 50 events + totals).
+All 29 audit actions are in `server/src/models/AccessLog.ts` (mirrored in `client/src/types/audit.ts`) and rendered by the admin dashboard from `GET /api/audit/summary`: the last 50 events, plus `totalUsers`, `totalDocuments` (not deleted) and `deletedDocuments`. A document its patient deleted stays readable by admins, with `deletedAt` on the document and on each feed row's `targetDocument`, which the dashboard shows as *Deleted by patient* (API_DOCUMENTS.md §5).
 
 ---
 
