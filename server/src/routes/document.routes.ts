@@ -5,6 +5,8 @@ import {
   getMyDocuments,
   listDoctors,
   shareDocumentWithDoctor,
+  unshareDocumentFromDoctor,
+  updateDocumentMetadata,
   uploadDocument,
   verifyDocumentIntegrity,
   viewDocument,
@@ -24,5 +26,7 @@ router.get('/:id/download', downloadDocument);
 router.get('/:id/integrity', verifyDocumentIntegrity);
 router.get('/:id', getDocument);
 router.patch('/:id/share', requireRole('patient'), shareDocumentWithDoctor);
+router.patch('/:id/unshare', requireRole('patient'), unshareDocumentFromDoctor);
+router.patch('/:id/metadata', requireRole('patient'), updateDocumentMetadata);
 
 export default router;

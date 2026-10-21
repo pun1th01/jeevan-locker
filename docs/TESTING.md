@@ -106,6 +106,8 @@ Six suites: access control, encryption, anchoring, break-glass, hardening and th
 | C15 | Patient lookup never reveals whether an email or id belongs to another role. | Probes: an unknown email; a doctor's, an admin's and a lab's email; an unknown id; a doctor's, an admin's and a lab's id; an email prefix. On both lookup endpoints (`GET /patients/lookup`, `POST /lab-links`) every probe gets the same status, body, content type and content length. Positive controls: the patient is found by email, in any case and with surrounding spaces, and by id. | `workflows.test.ts` → *patient lookup* |
 | C16 | A consent, grant or lab link can be decided only by the patient it names and seen only by the parties to it; a doctor cannot pair one patient with another patient's document. | Another patient's approve, reject or revoke is refused and the record keeps its state. Another patient's revoke of a live grant is refused and the doctor still reads. Third parties' lists never contain the record. A mismatched patient/document pair is refused and creates nothing. | `workflows.test.ts` → *consent*, *break-glass*, *lab links* |
 | C17 | A lab can upload into a patient's vault only while that patient's link is `ACTIVE`, and a refused upload stores nothing. | Uploads while pending, rejected, revoked or never linked are refused and leave no document row. The same lab succeeds while `ACTIVE`, and a report addressed to a non-patient id is 404. | `workflows.test.ts` → *lab links* |
+| C54 | Unsharing removes one doctor's direct share and nothing else; only the owning patient can do it, and it is recorded once. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §3. After the owner unshares, the doctor gets 403 on all four read paths and the document leaves their list. The response is `{ message, document }` without the doctor, which is what the dashboard reads, and one `DOCUMENT_UNSHARED` row names the doctor and patient. Another doctor's share stays. A doctor who also holds an approved consent, and one who also holds a live break-glass grant, keep reading after the unshare: the audited method becomes `consent` or `emergency`, and the consent and grant rows are untouched. Another patient gets 403; the shared doctor, a lab and an admin are refused by role. Each refusal leaves the share list and the audit log unchanged. Unsharing a doctor who has no share is a 200 that writes nothing. Five concurrent unshares write one row. | `documentManagement.test.ts` → *C54* |
+| C55 | Only the owning patient can change a document's title and description, and nothing else about it. A lab report keeps everything its lab issued, and the lab never sees the patient's description. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §4. A rename plus description (trimmed) shows on `GET /:id` and in the list, `/integrity` still verifies, and one `DOCUMENT_UPDATED` row records the fields and the previous title. An empty description clears it; a title-only edit keeps it. Limits: 500 characters accepted, 501 refused; the title must be 1–120; non-strings and an empty body are refused. Eight other fields (`uploadedBy`, `sharedWithDoctors`, chain fields, lab-report fields, `mimeType`) are each refused with 400. On a lab report the description is editable, a new title is 403, and every report field is unchanged. The issuing lab's `GET /:id` and list carry no `description`; a doctor with access sees it. Another patient gets 403; the doctor, the issuing lab and an admin are refused by role. A refusal changes no stored field and audits nothing, and a save of unchanged values audits nothing. | `documentManagement.test.ts` → *C55* |
 
 ### 3.2 Encryption at rest — suite 2 (`test/encryption/vault.test.ts`, 30 tests)
 
@@ -177,7 +179,7 @@ The viva runs on the development seed, and until this suite nothing executed it 
 
 ### 3.7 A decision takes effect once — suite 7 (`test/races/decisions.test.ts`, 10 tests)
 
-Specification: [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) §3 and [API_LAB.md](API_LAB.md) §4 (*Concurrent decisions*), held to the same standard as break-glass (C34, C36): one guarded write decides, and everything after it happens once. Every race goes over HTTP to the real app; nothing is intercepted. Which of two concurrent decisions wins is not asserted, since either is correct. What the tests forbid is both winning.
+Specification: [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) §3 and [API_LAB.md](API_LAB.md) §3 (*Concurrent decisions*), held to the same standard as break-glass (C34, C36): one guarded write decides, and everything after it happens once. Every race goes over HTTP to the real app; nothing is intercepted. Which of two concurrent decisions wins is not asserted, since either is correct. What the tests forbid is both winning.
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
@@ -257,6 +259,14 @@ A test that has never been seen failing proves little. Each change below was mad
 | Remove a variable from the pinned test environment | harness | G1, naming the variable and the file that reads it |
 | Consent and lab-link decisions by read → check → save (the previous code) | code | C51 and C52: both 15-round approve/reject races and both concurrent-revoke tests. The request races and C53 still pass, because the unique index already stopped duplicate requests. |
 | Put `status` back into the unique keys (the previous indexes) | code | C53: a `PENDING` row inserted beside an `APPROVED`/`ACTIVE` one is accepted |
+| Unshare without the owner check | code | C54, another patient's unshare |
+| Unshare also revokes the doctor's approved consents | code | C54, the consent-and-grant survival test |
+| Unshare audits whether or not it removed anything | code | C54: the no-op unshare and the five concurrent unshares |
+| Metadata ignores unknown fields instead of refusing them | code | C55, the eight forbidden fields |
+| Metadata without the owner check | code | C55, another patient's edit |
+| A lab report's title may be changed | code | C55, the lab-report test |
+| `description` sent to labs too | code | C55, the issuing lab's read and list |
+| Description limit 500 → 2000 (the dashboard's old textarea limit) | code | C55, the 501-character case |
 
 ---
 

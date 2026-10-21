@@ -300,14 +300,16 @@ Lab-report fields are flat and optional; **`uploadedByLab` being present is what
 interface MedicalDocument {
   id: string;
   title: string;
+  description?: string;             // the patient's own note — NEVER sent to a lab (API_DOCUMENTS.md §4)
   originalFileName: string;
   mimeType: 'application/pdf' | 'image/jpeg' | 'image/png';
   uploadedBy: User;                 // the owning PATIENT — also for lab reports
-  sharedWithDoctors: User[];
+  sharedWithDoctors?: User[];       // NEVER sent to a lab; every other reader receives it
   documentHash?: string;            // SHA-256 hex
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
+  encryptedAtRest: boolean;         // false only for legacy rows the encryption migration has not reached
   // --- present only when a lab issued the document ---
   uploadedByLab?: User;             // role 'lab', with organisation
   labName?: string;
@@ -324,7 +326,7 @@ interface MedicalDocument {
 
 ### Routes a lab is **denied** (all `403 You do not have permission to access this resource`)
 
-`POST /documents/upload` (patient), `PATCH /documents/:id/share` (patient), `GET /documents/doctors` (patient/admin), `GET /patients/lookup` (doctor — labs use `POST /lab-links`), `POST /consents/request` and every consent route, `POST /emergency-access`, `GET /audit/summary` (admin), everything under `/admin` (admin).
+`POST /documents/upload` (patient), `PATCH /documents/:id/share`, `/unshare` and `/metadata` (patient — a lab cannot rename or describe even a report it issued), `GET /documents/doctors` (patient/admin), `GET /patients/lookup` (doctor — labs use `POST /lab-links`), `POST /consents/request` and every consent route, `POST /emergency-access`, `GET /audit/summary` (admin), everything under `/admin` (admin).
 
 ---
 

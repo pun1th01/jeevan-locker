@@ -17,6 +17,12 @@ import type { DocumentMetadataInput, MedicalDocument, UploadDocumentInput } from
 import type { ConsentGrant } from '../../types/consent';
 import type { EmergencyAccess } from '../../types/emergencyAccess';
 
+// Server limits for PATCH /documents/:id/metadata (docs/API_DOCUMENTS.md).
+const TITLE_MAX_LENGTH = 120;
+const DESCRIPTION_MAX_LENGTH = 500;
+// DELETE /documents/:id does not exist yet; the button and its dialog stay in place behind this flag.
+const DOCUMENT_DELETION_ENABLED = false;
+
 export default function PatientDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
   const [doctors, setDoctors] = useState<User[]>([]);
@@ -460,10 +466,12 @@ export default function PatientDashboard() {
                   <Pencil className="h-4 w-4" />
                   Edit metadata
                 </Button>
-                <Button type="button" size="sm" variant="destructive" onClick={() => setDocumentPendingDeletion(selectedDocument)}>
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </Button>
+                {DOCUMENT_DELETION_ENABLED ? (
+                  <Button type="button" size="sm" variant="destructive" onClick={() => setDocumentPendingDeletion(selectedDocument)}>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -559,8 +567,12 @@ export default function PatientDashboard() {
                   onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, title: event.target.value }))}
                   className="mt-2"
                   required
-                  maxLength={120}
+                  maxLength={TITLE_MAX_LENGTH}
+                  readOnly={Boolean(metadataDocument?.uploadedByLab)}
                 />
+                {metadataDocument?.uploadedByLab ? (
+                  <span className="mt-1 block text-xs font-normal text-slate-500">A lab report keeps the title its lab issued.</span>
+                ) : null}
               </label>
               <label className="block text-sm font-medium text-slate-200">
                 Description <span className="font-normal text-slate-500">(optional)</span>
@@ -568,8 +580,11 @@ export default function PatientDashboard() {
                   value={metadataDraft.description ?? ''}
                   onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, description: event.target.value }))}
                   className="mt-2 min-h-28 w-full rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20"
-                  maxLength={2000}
+                  maxLength={DESCRIPTION_MAX_LENGTH}
                 />
+                <span className="mt-1 block text-right text-xs font-normal text-slate-500">
+                  {(metadataDraft.description ?? '').length}/{DESCRIPTION_MAX_LENGTH}
+                </span>
               </label>
               {metadataError ? <p className="text-sm text-rose-200">{metadataError}</p> : null}
               <div className="flex justify-end gap-2">

@@ -4,6 +4,8 @@ import path from 'path';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { Types } from 'mongoose';
 import {
+  DOCUMENT_DESCRIPTION_MAX_LENGTH,
+  DOCUMENT_TITLE_MAX_LENGTH,
   MedicalDocument,
   type IMedicalDocument,
   type ITestValue,
@@ -53,6 +55,8 @@ type DocumentWithUsers = Omit<IMedicalDocument, 'uploadedBy' | 'sharedWithDoctor
 export interface MedicalDocumentResponse {
   id: string;
   title: string;
+  /** The owning patient's note. Present only when set, and never sent to a lab — see receivesPatientNotes. */
+  description?: string;
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
   uploadedBy: SafeUser;
@@ -128,6 +132,26 @@ const receivesSharing = (viewer: UserRole): boolean => {
   }
 };
 
+/**
+ * Whether a reader receives the patient's own `description` of a document. It is the patient's note, written for
+ * their care; a lab that issued a report gets the report back as issued, never what the patient wrote about it.
+ * Exhaustive over the roles, like receivesSharing.
+ */
+const receivesPatientNotes = (viewer: UserRole): boolean => {
+  switch (viewer) {
+    case 'patient':
+    case 'doctor':
+    case 'admin':
+      return true;
+    case 'lab':
+      return false;
+    default: {
+      const unhandled: never = viewer;
+      return Boolean(unhandled);
+    }
+  }
+};
+
 /** The document as `viewer` may see it. Every document response goes through here with the caller's role. */
 export const serializeMedicalDocument = (document: IMedicalDocument, viewer: UserRole): MedicalDocumentResponse => {
   const documentWithUsers = document as DocumentWithUsers;
@@ -135,6 +159,7 @@ export const serializeMedicalDocument = (document: IMedicalDocument, viewer: Use
   return {
     id: document._id.toString(),
     title: document.title,
+    ...(document.description && receivesPatientNotes(viewer) ? { description: document.description } : {}),
     originalFileName: document.originalFileName,
     mimeType: document.mimeType,
     uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
@@ -780,4 +805,156 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
     message: alreadyShared ? 'Doctor already has access to this document' : 'Document shared with doctor',
     document: serializeMedicalDocument(populatedDocument, user.role),
   });
+});
+
+/** The document as stored after a write, populated and serialized for the caller — every write responds through it. */
+const respondWithDocument = async (res: Response, documentId: Types.ObjectId, viewer: UserRole, message: string) => {
+  const stored = await MedicalDocument.findById(documentId);
+  if (!stored) throw new Error(`Document ${documentId.toString()} disappeared before its response was built`);
+  res.json({ message, document: serializeMedicalDocument(await populateDocumentUsers(stored), viewer) });
+};
+
+/**
+ * PATCH /documents/:id/unshare { doctorId }   (patient, owner)
+ * Removes one doctor from the DIRECT share list and nothing else: an approved consent or a live break-glass grant the
+ * same doctor holds is a separate permission with its own revoke, and survives. One guarded $pull, so concurrent
+ * unshares audit once. Unsharing a doctor with no direct share is a 200 that writes nothing, mirroring a repeated share.
+ */
+export const unshareDocumentFromDoctor: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const doctorId = typeof req.body?.doctorId === 'string' ? req.body.doctorId : '';
+
+  if (!Types.ObjectId.isValid(doctorId)) {
+    res.status(400).json({ message: 'A valid doctor ID is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can change who this document is shared with' });
+    return;
+  }
+
+  const result = await MedicalDocument.updateOne(
+    { _id: document._id, uploadedBy: document.uploadedBy, sharedWithDoctors: doctorId },
+    { $pull: { sharedWithDoctors: new Types.ObjectId(doctorId) } }
+  );
+  const removed = result.modifiedCount === 1;
+
+  if (removed) {
+    await createAuditLog({
+      userId: user.id,
+      action: 'DOCUMENT_UNSHARED',
+      targetDocument: document._id,
+      ipAddress: getRequestIpAddress(req),
+      metadata: { doctorId, patientId: user.id },
+    });
+  }
+
+  await respondWithDocument(res, document._id, user.role, removed ? 'Direct access removed' : 'This doctor had no direct access to this document');
+});
+
+const EDITABLE_METADATA_FIELDS: ReadonlySet<string> = new Set(['title', 'description']);
+const TITLE_LENGTH_MESSAGE = `Document title must be 1 to ${DOCUMENT_TITLE_MAX_LENGTH} characters`;
+const DESCRIPTION_LENGTH_MESSAGE = `Description must be ${DOCUMENT_DESCRIPTION_MAX_LENGTH} characters or fewer`;
+
+/**
+ * PATCH /documents/:id/metadata { title?, description? }   (patient, owner)
+ * The only fields a patient may change, and the body may carry nothing else: ownership, sharing, the file, its hash
+ * and every lab-issued field are refused outright rather than silently ignored. A lab report keeps the title its lab
+ * issued; the patient may only describe it. An empty description clears it. The file and its on-chain hash are not
+ * touched, so /integrity verifies exactly as before. Saving unchanged values is a 200 that audits nothing.
+ */
+export const updateDocumentMetadata: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  if (Object.keys(body).some((field) => !EDITABLE_METADATA_FIELDS.has(field))) {
+    res.status(400).json({ message: 'Only the title and description of a document can be changed' });
+    return;
+  }
+
+  if (body.title === undefined && body.description === undefined) {
+    res.status(400).json({ message: 'Send a title or a description to change' });
+    return;
+  }
+
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined;
+
+  if (body.title !== undefined && (!title || title.length > DOCUMENT_TITLE_MAX_LENGTH)) {
+    res.status(400).json({ message: TITLE_LENGTH_MESSAGE });
+    return;
+  }
+
+  const description = typeof body.description === 'string' ? body.description.trim() : undefined;
+
+  if (body.description !== undefined && (description === undefined || description.length > DOCUMENT_DESCRIPTION_MAX_LENGTH)) {
+    res.status(400).json({ message: DESCRIPTION_LENGTH_MESSAGE });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can edit this document' });
+    return;
+  }
+
+  const titleChanged = title !== undefined && title !== document.title;
+
+  if (titleChanged && document.uploadedByLab) {
+    res.status(403).json({ message: 'A lab report keeps the title its lab issued; only its description can be changed' });
+    return;
+  }
+
+  const descriptionChanged = description !== undefined && description !== (document.description ?? '');
+
+  if (!titleChanged && !descriptionChanged) {
+    await respondWithDocument(res, document._id, user.role, 'No changes to save');
+    return;
+  }
+
+  const update: { $set?: Record<string, string>; $unset?: Record<string, ''> } = {};
+  if (titleChanged) update.$set = { title };
+  if (descriptionChanged && description) update.$set = { ...update.$set, description };
+  if (descriptionChanged && !description) update.$unset = { description: '' };
+
+  await MedicalDocument.updateOne({ _id: document._id, uploadedBy: document.uploadedBy }, update, { runValidators: true });
+
+  await createAuditLog({
+    userId: user.id,
+    action: 'DOCUMENT_UPDATED',
+    targetDocument: document._id,
+    ipAddress: getRequestIpAddress(req),
+    metadata: {
+      fields: [titleChanged ? 'title' : null, descriptionChanged ? 'description' : null].filter(Boolean).join(','),
+      ...(titleChanged ? { previousTitle: document.title } : {}),
+      patientId: user.id,
+    },
+  });
+
+  await respondWithDocument(res, document._id, user.role, 'Document details updated');
 });

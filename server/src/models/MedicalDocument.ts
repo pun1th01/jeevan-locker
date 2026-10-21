@@ -25,6 +25,8 @@ export interface ITestValue {
 export interface IMedicalDocument extends Document {
   _id: Types.ObjectId;
   title: string;
+  /** The owning patient's own note on the record, set through PATCH /documents/:id/metadata. Never sent to a lab. */
+  description?: string;
   originalFileName: string;
   storedFileName: string;
   filePath: string;
@@ -60,6 +62,8 @@ export interface IMedicalDocument extends Document {
 }
 
 const REPORT_TEXT_MAX_LENGTH = 120;
+export const DOCUMENT_TITLE_MAX_LENGTH = 120;
+export const DOCUMENT_DESCRIPTION_MAX_LENGTH = 500;
 
 const documentEncryptionSchema = new Schema<DocumentEncryption>(
   {
@@ -91,8 +95,9 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
       type: String,
       required: [true, 'Document title is required'],
       trim: true,
-      maxlength: 120,
+      maxlength: DOCUMENT_TITLE_MAX_LENGTH,
     },
+    description: { type: String, trim: true, maxlength: DOCUMENT_DESCRIPTION_MAX_LENGTH, default: undefined },
     originalFileName: {
       type: String,
       required: true,
