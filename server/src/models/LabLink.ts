@@ -37,10 +37,11 @@ const labLinkSchema = new Schema<ILabLink>(
   { versionKey: false }
 );
 
-// At most one open (PENDING or ACTIVE) link per lab+patient; rejected/revoked history can accumulate.
+// At most one open (PENDING or ACTIVE) link per lab+patient, whatever its status; rejected/revoked history can
+// accumulate. Status is not part of the key, so a pending request and an active link may not coexist either.
 labLinkSchema.index(
-  { labId: 1, patientId: 1, status: 1 },
-  { unique: true, partialFilterExpression: { status: { $in: ['PENDING', 'ACTIVE'] } } }
+  { labId: 1, patientId: 1 },
+  { unique: true, partialFilterExpression: { status: { $in: ['PENDING', 'ACTIVE'] } }, name: 'one_live_link_per_lab_patient' }
 );
 labLinkSchema.index({ patientId: 1, status: 1, requestedAt: -1 });
 

@@ -69,9 +69,11 @@ const consentGrantSchema = new Schema<IConsentGrant>(
   { versionKey: false }
 );
 
+// At most ONE live (PENDING or APPROVED) consent per doctor per document, enforced by the database across server
+// processes. Status is deliberately not part of the key: a pending request and an approved one may not coexist either.
 consentGrantSchema.index(
-  { doctorId: 1, documentId: 1, status: 1 },
-  { unique: true, partialFilterExpression: { status: { $in: ['PENDING', 'APPROVED'] } } }
+  { doctorId: 1, documentId: 1 },
+  { unique: true, partialFilterExpression: { status: { $in: ['PENDING', 'APPROVED'] } }, name: 'one_live_consent_per_doctor_document' }
 );
 consentGrantSchema.index({ patientId: 1, status: 1, requestedAt: -1 });
 
