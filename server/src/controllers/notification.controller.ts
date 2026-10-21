@@ -47,10 +47,12 @@ export const markNotificationRead: RequestHandler = asyncHandler(async (req, res
     return;
   }
 
+  // Scoped to the recipient in the filter itself: another user's id matches nothing and gets the same 404 as an id
+  // that does not exist, so an id is never confirmed (TESTING.md C56).
   const notification = await Notification.findOneAndUpdate(
     { _id: notificationId, recipientUserId: user.id },
     { $set: { read: true } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!notification) {
