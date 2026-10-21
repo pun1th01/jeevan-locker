@@ -6,6 +6,7 @@ import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import DocumentUploadModal from '../../components/documents/DocumentUploadModal';
 import EmergencyAccessPanel from '../../components/emergency/EmergencyAccessPanel';
+import PatientLabLinksPanel from '../../components/lab/PatientLabLinksPanel';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { getApiErrorMessage } from '../../lib/api';
@@ -454,6 +455,8 @@ export default function PatientDashboard() {
             </div>
           ) : <div className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-5 text-sm text-slate-400">No pending document access requests.</div>}
         </div>
+
+        <PatientLabLinksPanel />
 
         <EmergencyAccessPanel />
 

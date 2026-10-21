@@ -158,6 +158,8 @@ Role: **patient** (owner). `ACTIVE → REVOKED`, sets `revokedAt`. See the revok
 
 Response `200`: `{ message: 'Lab link revoked', link: LabLink }`. Errors as above with `409 Only active lab links can be revoked`. Audit: `LAB_UNLINKED`.
 
+**Patient UI.** The patient dashboard's *Diagnostic labs* panel (`client/src/components/lab/PatientLabLinksPanel.tsx`) lists `PENDING` requests with Approve and Reject, and `ACTIVE` links with Revoke. Each row shows the lab's organisation and the request date. Revoke asks for confirmation and says that issued reports stay readable by the lab. The list is reloaded from the server after every action and every 30 s.
+
 **Concurrent decisions.** Approve, reject and revoke are each one guarded write (`updateOne({ _id, patientId, status: <required> })`, success only when it modified one row). Two decisions arriving together — approve and reject from two tabs, a double-click — produce exactly one `200`; the others get the `409` above and write nothing, so there is one audit row and at most one `lab.link.approved` event. The database allows at most one open (`PENDING` or `ACTIVE`) link per lab and patient (`one_live_link_per_lab_patient`). TESTING.md C52–C53.
 
 ### `POST /api/lab/reports` — upload a verified report
