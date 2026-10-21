@@ -1,0 +1,75 @@
+# Every pull request and every push to main: the server's full suite on a real Hardhat chain and an in-memory MongoDB
+# (docs/TESTING.md), and the client's type check and lint. Nothing here needs a secret or a .env: the test harness
+# starts its own chain and database and generates its own keys.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server — typecheck, anchor preimages, test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    env:
+      # One fixed place for the MongoDB binary mongodb-memory-server downloads, so it can be cached between runs.
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Hardhat 2 supports Node 18–22 (it warns on newer releases).
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Cache the MongoDB binary
+        uses: actions/cache@v4
+        with:
+          path: .cache/mongodb-binaries
+          key: mongodb-${{ runner.os }}-${{ hashFiles('server/package-lock.json') }}
+
+      - name: Cache the Solidity compiler
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: solc-${{ runner.os }}-${{ hashFiles('server/hardhat.config.js') }}
+
+      - run: npm ci
+      - run: npm run typecheck:test
+      - run: npm run build
+      - run: npm run verify:anchors
+      - run: npm test
+
+  client:
+    name: client — tsc -b and eslint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - run: npm ci
+      - run: npx tsc -b
+      - run: npm run lint
