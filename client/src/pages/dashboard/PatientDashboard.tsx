@@ -13,7 +13,7 @@ import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { consentService } from '../../services/consent.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
-import type { User } from '../../types/auth';
+import type { User, UserReference } from '../../types/auth';
 import type { DocumentMetadataInput, MedicalDocument, UploadDocumentInput } from '../../types/document';
 import type { ConsentGrant } from '../../types/consent';
 import type { EmergencyAccess } from '../../types/emergencyAccess';
@@ -266,7 +266,7 @@ export default function PatientDashboard() {
     }
   };
 
-  const handleUnshare = async (document: MedicalDocument, doctor: User) => {
+  const handleUnshare = async (document: MedicalDocument, doctor: UserReference) => {
     setUnsharingDoctorId(doctor.id);
     setManagementError(null);
 

@@ -305,15 +305,15 @@ interface MedicalDocument {
   description?: string;             // the patient's own note — NEVER sent to a lab (API_DOCUMENTS.md §4)
   originalFileName: string;
   mimeType: 'application/pdf' | 'image/jpeg' | 'image/png';
-  uploadedBy: User;                 // the owning PATIENT — also for lab reports
-  sharedWithDoctors?: User[];       // NEVER sent to a lab; every other reader receives it
+  uploadedBy: { id: string; name: string };  // the owning PATIENT — to a lab, never their email (API_DOCUMENTS.md §6)
+  sharedWithDoctors?: User[];       // NEVER sent to a lab (nor to a doctor); the owning patient and admins receive it
   documentHash?: string;            // SHA-256 hex
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
   encryptedAtRest: boolean;         // false only for legacy rows the encryption migration has not reached
   // --- present only when a lab issued the document ---
-  uploadedByLab?: User;             // role 'lab', with organisation
+  uploadedByLab?: { id: string; name: string; organisation?: string };  // the issuing lab (admins: full record)
   labName?: string;
   testName?: string;
   nablCertNumber?: string;

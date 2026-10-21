@@ -11,16 +11,16 @@ import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
 import { consentService } from '../../services/consent.service';
-import type { MedicalDocument } from '../../types/document';
+import type { DoctorMedicalDocument } from '../../types/document';
 import type { EmergencyAccess, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
 import type { ConsentGrant, RequestConsentInput } from '../../types/consent';
 
 export default function DoctorDashboard() {
   // Mirrors the server gate: unverified doctors get 403 on lookup, consent request, and break-glass.
   const isVerified = useAuthStore((state) => state.user?.verified ?? false);
-  const [documents, setDocuments] = useState<MedicalDocument[]>([]);
-  const [selectedDocument, setSelectedDocument] = useState<MedicalDocument | null>(null);
-  const [previewDocument, setPreviewDocument] = useState<MedicalDocument | null>(null);
+  const [documents, setDocuments] = useState<DoctorMedicalDocument[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<DoctorMedicalDocument | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<DoctorMedicalDocument | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export default function DoctorDashboard() {
     setPageError(null);
 
     try {
-      setDocuments(await documentService.getMyDocuments());
+      setDocuments(await documentService.getMyDocuments<DoctorMedicalDocument>());
     } catch (error) {
       setPageError(getApiErrorMessage(error));
     } finally {
@@ -102,7 +102,7 @@ export default function DoctorDashboard() {
     setPageError(null);
 
     try {
-      const document = await documentService.getDocument(documentId);
+      const document = await documentService.getDocument<DoctorMedicalDocument>(documentId);
       setSelectedDocument(document);
       setDocuments((currentDocuments) =>
         currentDocuments.map((currentDocument) => (currentDocument.id === document.id ? document : currentDocument))
@@ -126,7 +126,7 @@ export default function DoctorDashboard() {
       setEmergencyNotice(`${message}. All activity is logged, and the patient can end it sooner.`);
 
       try {
-        const document = await documentService.getDocument(emergencyAccess.documentId);
+        const document = await documentService.getDocument<DoctorMedicalDocument>(emergencyAccess.documentId);
         setDocuments((currentDocuments) => {
           const alreadyListed = currentDocuments.some((currentDocument) => currentDocument.id === document.id);
           return alreadyListed

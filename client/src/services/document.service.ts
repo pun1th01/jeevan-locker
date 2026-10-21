@@ -1,14 +1,10 @@
 import axios from 'axios';
 import { api } from '../lib/api';
 import type { User } from '../types/auth';
-import type { DocumentMetadataInput, IntegrityVerificationResult, MedicalDocument, UploadDocumentInput } from '../types/document';
+import type { AnyMedicalDocument, DocumentMetadataInput, IntegrityVerificationResult, MedicalDocument, UploadDocumentInput } from '../types/document';
 
 interface DocumentResponse {
   document: MedicalDocument;
-}
-
-interface DocumentListResponse {
-  documents: MedicalDocument[];
 }
 
 interface DoctorListResponse {
@@ -40,13 +36,14 @@ const throwBlobResponseError = async (error: unknown): Promise<never> => {
 };
 
 export const documentService = {
-  async getMyDocuments(): Promise<MedicalDocument[]> {
-    const { data } = await api.get<DocumentListResponse>('/documents/my-documents');
+  /** A patient (or admin) receives MedicalDocument; a doctor or lab, SharedMedicalDocument. Pass the reader's type. */
+  async getMyDocuments<T extends AnyMedicalDocument = MedicalDocument>(): Promise<T[]> {
+    const { data } = await api.get<{ documents: T[] }>('/documents/my-documents');
     return data.documents;
   },
 
-  async getDocument(documentId: string): Promise<MedicalDocument> {
-    const { data } = await api.get<DocumentResponse>(`/documents/${documentId}`);
+  async getDocument<T extends AnyMedicalDocument = MedicalDocument>(documentId: string): Promise<T> {
+    const { data } = await api.get<{ document: T }>(`/documents/${documentId}`);
     return data.document;
   },
 

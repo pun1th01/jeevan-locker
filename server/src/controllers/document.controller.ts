@@ -60,16 +60,18 @@ export interface MedicalDocumentResponse {
   description?: string;
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
-  uploadedBy: SafeUser;
-  /** Which doctors the patient shared the document with. Never sent to a lab — see receivesSharing. */
-  sharedWithDoctors?: SafeUser[];
+  /** The owning patient, minimised per reader (REFERENCE_FIELDS). */
+  uploadedBy: UserReference;
+  /** Which doctors the patient shared the document with. Only the patient and admins receive it — see receivesSharing. */
+  sharedWithDoctors?: UserReference[];
   documentHash?: string;
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
   /** False only for legacy rows the encryption migration has not reached yet. */
   encryptedAtRest: boolean;
-  uploadedByLab?: SafeUser;
+  /** The issuing lab, minimised per reader (REFERENCE_FIELDS). */
+  uploadedByLab?: UserReference;
   labName?: string;
   testName?: string;
   nablCertNumber?: string;
@@ -116,16 +118,17 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
 };
 
 /**
- * Whether a reader receives `sharedWithDoctors` — the doctors a patient chose to share a document with, with their
- * names and emails. A lab issues reports but takes no part in the patient's care decisions, so it never learns who
- * else can read a document, not even one it issued. Exhaustive over the roles: a new role must decide explicitly.
+ * Whether a reader receives `sharedWithDoctors` — the doctors a patient chose to share a document with. It is the
+ * patient's own decision about their care team, so it goes to the patient (who manages it) and to admins. A doctor
+ * reads the document, not the list of colleagues who also may; a lab issues reports but takes no part in care
+ * decisions. Exhaustive over the roles: a new role must decide explicitly.
  */
 const receivesSharing = (viewer: UserRole): boolean => {
   switch (viewer) {
     case 'patient':
-    case 'doctor':
     case 'admin':
       return true;
+    case 'doctor':
     case 'lab':
       return false;
     default: {
@@ -133,6 +136,36 @@ const receivesSharing = (viewer: UserRole): boolean => {
       return Boolean(unhandled);
     }
   }
+};
+
+/** A user as one reader of a document sees them: `id` and `name` always, and only what that reader needs beyond. */
+export type UserReference = Pick<SafeUser, 'id' | 'name'> & Partial<Omit<SafeUser, 'id' | 'name'>>;
+
+/** Which part a referenced user plays in the document. */
+type ReferenceRole = 'owner' | 'sharedDoctor' | 'issuingLab';
+
+/**
+ * Response minimisation (docs/API_DOCUMENTS.md §6): the fields of each referenced user that each reader receives.
+ * An admin gets the full account record. Nobody else ever gets `verified`, `createdAt` or `role` of another user, and an
+ * email only where the reader acts on it: a doctor contacting the patient, a patient managing whom they shared with.
+ * `sharedDoctor` applies only to readers that receive the share list at all (receivesSharing).
+ */
+const REFERENCE_FIELDS: Record<Exclude<UserRole, 'admin'>, Record<ReferenceRole, ReadonlyArray<keyof SafeUser>>> = {
+  patient: { owner: ['id', 'name'], sharedDoctor: ['id', 'name', 'email'], issuingLab: ['id', 'name', 'organisation'] },
+  doctor: { owner: ['id', 'name', 'email'], sharedDoctor: [], issuingLab: ['id', 'name', 'organisation'] },
+  lab: { owner: ['id', 'name'], sharedDoctor: [], issuingLab: ['id', 'name', 'organisation'] },
+};
+
+const referenceFor = (user: Types.ObjectId | PopulatedUserReference, part: ReferenceRole, viewer: UserRole): UserReference => {
+  const full = serializeUserReference(user);
+
+  if (viewer === 'admin') {
+    return full;
+  }
+
+  return Object.fromEntries(
+    REFERENCE_FIELDS[viewer][part].filter((field) => full[field] !== undefined).map((field) => [field, full[field]])
+  ) as UserReference;
 };
 
 /**
@@ -165,14 +198,16 @@ export const serializeMedicalDocument = (document: IMedicalDocument, viewer: Use
     ...(document.description && receivesPatientNotes(viewer) ? { description: document.description } : {}),
     originalFileName: document.originalFileName,
     mimeType: document.mimeType,
-    uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
-    ...(receivesSharing(viewer) ? { sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference) } : {}),
+    uploadedBy: referenceFor(documentWithUsers.uploadedBy, 'owner', viewer),
+    ...(receivesSharing(viewer)
+      ? { sharedWithDoctors: documentWithUsers.sharedWithDoctors.map((doctor) => referenceFor(doctor, 'sharedDoctor', viewer)) }
+      : {}),
     documentHash: document.documentHash,
     hashAlgorithm: document.hashAlgorithm,
     blockchainTxHash: document.blockchainTxHash,
     blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
     encryptedAtRest: Boolean(document.encryption),
-    ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers) : {}),
+    ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers, viewer) : {}),
     // The flag is for admins only: the issuing lab, which also still reads a deleted report, is not told.
     ...(document.deletedAt && viewer === 'admin' ? { deletedAt: document.deletedAt.toISOString() } : {}),
     createdAt: document.createdAt.toISOString(),
@@ -186,12 +221,13 @@ const isLabReport = (document: DocumentWithUsers): document is LabReportDocument
 
 /** Report fields are emitted only when a lab issued the document; bounds are omitted when unset. */
 const serializeLabReportFields = (
-  document: LabReportDocument
+  document: LabReportDocument,
+  viewer: UserRole
 ): Pick<
   MedicalDocumentResponse,
   'uploadedByLab' | 'labName' | 'testName' | 'nablCertNumber' | 'authorizingDoctorName' | 'hospitalName' | 'reportDate' | 'testValues'
 > => ({
-  uploadedByLab: serializeUserReference(document.uploadedByLab),
+  uploadedByLab: referenceFor(document.uploadedByLab, 'issuingLab', viewer),
   labName: document.labName,
   testName: document.testName,
   nablCertNumber: document.nablCertNumber,

@@ -95,4 +95,21 @@ There is no undelete.
 
 ---
 
+## 6. What each reader learns about the people on a document (response minimisation)
+
+Every document response (`GET /documents/:id`, `my-documents`, and every write response) names up to three kinds of people: the owning patient (`uploadedBy`), the doctors it is shared with (`sharedWithDoctors`) and, for a lab report, the issuing lab (`uploadedByLab`). Each reader receives only what they act on:
+
+| Reader | `uploadedBy` (the patient) | `sharedWithDoctors` | `uploadedByLab` |
+|---|---|---|---|
+| the owning patient | `{ id, name }` | `[{ id, name, email }]`, to manage them | `{ id, name, organisation }` |
+| a doctor with access | `{ id, name, email }`, to contact the patient | **not sent** | `{ id, name, organisation }` |
+| the issuing lab | `{ id, name }` | **not sent** | `{ id, name, organisation }` |
+| an admin | the full account record (`id, name, email, role, verified, organisation?, createdAt`) | full records | full record |
+
+Nobody but an admin ever receives another user's `role`, `verified` flag or account `createdAt`, nor a lab account's email. Which doctors a patient shared a document with is the patient's own care decision: a doctor reads the document, not the list of colleagues who also may. A lab sees neither.
+
+Consents, break-glass grants and lab links already name people as `{ id, name }` (a lab adds `organisation`) to both parties, as their documented shapes say (API_CONSENT_EMERGENCY.md §3.2, §4.2; API_LAB.md §2). Notifications carry only `actorName`. TESTING.md C59–C60 pin every one of these shapes per reader.
+
+---
+
 Tests: TESTING.md C54 (unshare) and C55 (metadata), `server/test/access/documentManagement.test.ts`; C57–C58 (delete), `server/test/access/documentDeletion.test.ts`. Every route here has a row in the route inventory (C1–C3).
