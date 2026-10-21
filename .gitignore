@@ -10,3 +10,6 @@ uploads
 # to its own node). Tracking it made every compile dirty the tree.
 server/artifacts/
 server/cache/
+
+# Local run logs (e.g. `npm run chain > hardhat-node.log`). Never part of the repository.
+*.log
