@@ -309,9 +309,11 @@ export default function PatientDashboard() {
   };
 
   const renderShareActions = (document: MedicalDocument) => {
-    const availableDoctors = doctors.filter(
-      (doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id)
-    );
+    // Anyone can self-register as a doctor, so an account an admin has not verified is labelled as such and listed last:
+    // sharing stays the patient's decision (docs/API_ADMIN.md §3), but never an uninformed one.
+    const availableDoctors = doctors
+      .filter((doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id))
+      .sort((a, b) => Number(b.verified) - Number(a.verified));
 
     if (doctors.length === 0) {
       return <span className="rounded-md bg-white/[0.04] px-2 py-1 text-xs text-slate-500">No doctors registered</span>;
@@ -341,7 +343,7 @@ export default function PatientDashboard() {
           <option value="">Select doctor</option>
           {availableDoctors.map((doctor) => (
             <option key={doctor.id} value={doctor.id}>
-              {doctor.name}
+              {doctor.verified ? doctor.name : `${doctor.name} (not verified)`}
             </option>
           ))}
         </select>

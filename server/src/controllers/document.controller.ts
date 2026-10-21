@@ -410,7 +410,19 @@ const getStringParam = (value: string | string[] | undefined): string => {
   return value ?? '';
 };
 
-const getSafeDownloadFileName = (fileName: string): string => path.basename(fileName).replace(/["\\]/g, '');
+/**
+ * Content-Disposition per RFC 6266: an ASCII `filename` fallback (anything outside printable ASCII, and quotes and
+ * backslashes, become "_") plus `filename*` carrying the exact name as percent-encoded UTF-8. Node writes header
+ * values as Latin-1, so a raw non-Latin name (a Devanagari "रिपोर्ट.pdf") would be cut into control bytes and the
+ * whole response rejected by the browser.
+ */
+export const contentDispositionFor = (disposition: 'inline' | 'attachment', fileName: string): string => {
+  // The last segment after either separator, on every platform (path.basename splits on "\" only on Windows).
+  const name = fileName.split(/[\\/]/).pop() ?? '';
+  const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+};
 
 const resolveDocumentFilePath = (document: IMedicalDocument): string | null => {
   if (path.basename(document.storedFileName) !== document.storedFileName) {
@@ -491,11 +503,9 @@ const streamDocumentFile = async (
     }
   }
 
-  const safeFileName = getSafeDownloadFileName(document.originalFileName || document.storedFileName);
-
   res.setHeader('Content-Type', document.mimeType);
   res.setHeader('Content-Length', contentLength.toString());
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFileName}"`);
+  res.setHeader('Content-Disposition', contentDispositionFor(disposition, document.originalFileName || document.storedFileName));
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   await createAuditLog({
@@ -595,6 +605,13 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
   if (!title) {
     await discardUploadedFile(file.path);
     res.status(400).json({ message: 'Document title is required' });
+    return;
+  }
+
+  // Checked here, like the lab-report and metadata routes, rather than left to the model: a refusal names the rule.
+  if (title.length > DOCUMENT_TITLE_MAX_LENGTH) {
+    await discardUploadedFile(file.path);
+    res.status(400).json({ message: TITLE_LENGTH_MESSAGE });
     return;
   }
 

@@ -193,6 +193,24 @@ Specification: [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) §3 and [API
 | C52 | Concurrent decisions on one lab link take effect exactly once. | 15 rounds of approve ×2 and reject ×2: one `200` per round, the winner's status and timestamp only, one audit row, and the `lab.link.approved` event only when approval won. Five concurrent revokes: one `200`, one `LAB_UNLINKED`. Five concurrent requests: one `201`, one row, one `LAB_LINK_REQUESTED`, one event. | *C52* |
 | C53 | The database holds at most one live consent per doctor and document, and one open link per lab and patient, whatever their status. Closed history is unlimited. | Rows inserted directly, with no handler and so no pre-check, as a second server process could: a `PENDING` consent beside an `APPROVED` one, and a second `APPROVED`, are refused with a duplicate-key error. The same holds for a `PENDING` link beside an `ACTIVE` one. Any number of `REJECTED`/`REVOKED` rows are accepted. After a revoke, the same doctor or lab can request and be approved again over HTTP. | *C53* |
 
+### 3.8 The final security pass — suite 8 (`test/security/adversarial.test.ts`, 7 tests)
+
+Run after everything else had landed, since the newest routes add endpoints and ownership rules. Every role attacked every write route and every id route; findings and fixes are in §5. Object-level authorization is proved resource by resource elsewhere, so this suite pins only what the pass itself found:
+
+| Area attacked | Where it is proved |
+|---|---|
+| Role gates on all routes, including the new document, appointment and notification routes | C1–C3 (the inventory grid) |
+| Lab-link panel: deciding or revoking another patient's link, or another lab revoking one; races | C16, C52 |
+| Notifications: reading or marking another user's, list scoping | C56 |
+| Admin UI: creating admins, verifying non-doctors, forged role claims | C4, C14 |
+| Document management: unshare, metadata, delete, and response minimisation | C54–C55, C57–C59 |
+| Consents, grants, lab links: decisions by the wrong party, response shapes | C16, C51–C53, C60 |
+| Appointments | C61 |
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C62 | A client's mistake is always a clean 4xx: never a 5xx, never a stack trace, never parser or validator internals. A document whose file name is not ASCII can still be opened. | Fourteen write routes, each called by a role that reaches its handler with real ids, get six hostile bodies: an array, operator-shaped values (`{$ne: null}`, `{$gt: ""}`) in every field, 10,000-character strings, wrongly typed numbers and dates, and `__proto__`/`constructor.prototype` keys. None answers 5xx or with a stack, and `Object.prototype` stays clean. Eleven id routes given five non-ids (including `%00` and an encoded traversal) all answer 400 or 404. Malformed JSON gives exactly `400 {message: 'Request body is not valid JSON'}`; a 1.1 MB body gives `413 {message: 'Request body is too large'}`; an unsupported charset (415) carries no stack. A field-validation refusal has one plain string per field. An upload title of 121 characters is refused by name and leaves no file and no row. A Devanagari file name round-trips exactly. `/view` and `/download` answer 200 with a response head that is printable ASCII byte for byte (read from the raw socket), and `filename*` decodes to the exact name. Quotes, semicolons, non-ASCII and path segments cannot break out of the header, with the same result on every platform. | `adversarial.test.ts` |
+
 ---
 
 ## 4. Evidence the tests can fail
@@ -303,6 +321,12 @@ A test that has never been seen failing proves little. Each change below was mad
 | No overlap check | code | C61: the overlapping slot (the same-start case is still refused by the unique index) |
 | Publishing not gated on verification | code | C61: the unverified doctor's publish (and C3, that cell) |
 | Withdrawing a cancelled slot again (no status guard) | code | C61: the second cancel succeeded |
+| The previous `Content-Disposition` (the raw name in a Latin-1 header) | code | C62: the Devanagari round trip (the response head held control bytes) and the header-escape test |
+| multer reads file names as Latin-1 (its default) | code | C62: the stored name was mojibake |
+| No upload title length check (left to the model) | code | C62: a Mongoose `Validation failed` instead of the named rule |
+| body-parser errors not mapped (the previous handler) | code | C62: the parser's own message, with a stack |
+| A stack on every non-production error (the previous rule) | code | C62: the 415 unsupported-charset response |
+| Validation errors sent as Mongoose objects (the previous handler) | code | **Survived — unreachable.** Every controller now validates its input before the model does, so no HTTP request reaches this branch. The plain-string mapping stays as defence in depth; the shape clients actually receive is pinned by C62's field-validation test. |
 | The available list adds the `patient` field | code | **Survived — equivalent mutant.** The list holds only `OPEN` slots, which never have a patient, so the field can never appear; no test can tell the two apart. |
 
 ---
@@ -322,6 +346,14 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 - **Deployment note for the new index:** a database that already holds duplicate live grants (reachable only through the old race) cannot build `one_active_grant_per_doctor_document` until they are expired or revoked. A fresh database is unaffected.
 - **Fixed: a chain outage during upload was reported as `500 Internal server error`, with a stack trace outside production.** The cleanup was already right. An unreachable node (connection refused, reset, timeout, DNS failure, or ethers `NETWORK_ERROR`/`TIMEOUT`) is now a `ChainUnavailableError`. It is answered centrally as `503 The blockchain network is unavailable right now. Please try again shortly.` with no stack, on patient uploads, lab-report uploads and `/integrity`. A transaction that reaches the chain and *reverts* stays a real error. The "chain not configured" 503 lost its stack trace the same way.
 - **Fixed: concurrent consent and lab-link decisions both took effect.** Found in the 2026-10-03 diagnosis (15 of 15 rounds) and now pinned by C51 and C52. An approve and a reject arriving together both returned `200`. The consent was left with `approvedAt` *and* `rejectedAt`, two audit rows, and both `APPROVED` and `REJECTED` anchored on-chain; the same race existed on lab links. The cause was the read → check → save the break-glass revoke had already moved away from. Each transition is now a guarded `updateOne` that succeeds only if it changed the row, and nothing is audited, anchored or notified unless it did. The unique indexes no longer include `status`, so a pending and an approved record for one pair cannot coexist either. Anchor preimages are unchanged: the audit row and the anchor are built from the stored row, re-read after the write. **Deployment note:** on a persistent database the old index keys (`…_status_1`) stay until dropped by hand. They are looser than the new ones and harmless.
+- **The final security pass (2026-10-21), suite 8.** No route answered a 5xx to any hostile body or id, and no cross-role attempt on the newest routes succeeded. Five findings, each fixed:
+  1. **Fixed: a document with a non-Latin file name could not be opened or downloaded.** multer read multipart file names as Latin-1, so `रिपोर्ट.pdf` was stored as mojibake. Node writes header values as Latin-1, so the raw name was cut into control bytes in `Content-Disposition` and the response was rejected. Names are now read as UTF-8. The header follows RFC 6266: an ASCII `filename` fallback plus the exact name in `filename*`. C62.
+  2. **Fixed: client errors carried stack traces outside production.** Malformed or oversized JSON (and any other 4xx reaching the generic handler) answered with the parser's message and a full stack, server paths included. These are now plain messages; a stack appears only on a 500, and only outside production. C62.
+  3. **Fixed: an over-long upload title was refused with validator internals** (`ValidatorError`, the quoted input), in an `errors` shape the client renders as `[object Object]`. The title is now checked by name, like the lab-report and metadata routes, and model validation errors map to one plain sentence per field. C62.
+  4. **Fixed (UI): the doctor dashboard said access was "granted by the patient" even under break-glass.** It now states the real route: emergency access until a given time, an approved request, or a direct share. Found by reading in the 2026-10-03 diagnosis; checked in the browser in the end-to-end run.
+  5. **Fixed (UI): the patient's share list did not distinguish self-registered doctor accounts no admin had verified.** Sharing stays the patient's decision, per the documented verification policy (API_ADMIN.md §3), so the server is unchanged. The list now marks such accounts *not verified* and puts them last. Checked in the browser in the end-to-end run.
+
+  Accepted, unchanged: registration answers `409` for an email already in use (rate-limited, 5 per hour per address); repeated query keys (`?status=A&status=B`) fall back to the default filter; tokens live in browser storage (the "beyond a demo" list in the remaining-work plan).
 - **Fixed: a file of exactly 5 MB was refused.** The upload dialog accepts a file of exactly 5 MB (it rejects only `size > 5 MB`), but multer's limit, as busboy applies it, rejects a file that *reaches* the configured size. The server now configures `5 MB + 1` bytes, so exactly 5,242,880 bytes is accepted and 5,242,881 is refused. API_LAB.md states the boundary exactly, and C41 pins it from both sides.
 
 ---
