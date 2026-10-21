@@ -7,6 +7,7 @@ import DocumentPreviewModal from '../../components/documents/DocumentPreviewModa
 import DocumentUploadModal from '../../components/documents/DocumentUploadModal';
 import EmergencyAccessPanel from '../../components/emergency/EmergencyAccessPanel';
 import PatientLabLinksPanel from '../../components/lab/PatientLabLinksPanel';
+import PatientAppointmentsPanel from '../../components/appointments/PatientAppointmentsPanel';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { getApiErrorMessage } from '../../lib/api';
@@ -455,6 +456,8 @@ export default function PatientDashboard() {
         </div>
 
         <PatientLabLinksPanel />
+
+        <PatientAppointmentsPanel />
 
         <EmergencyAccessPanel />
 

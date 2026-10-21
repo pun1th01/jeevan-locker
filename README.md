@@ -144,6 +144,19 @@ See [API_DOCUMENTS.md](docs/API_DOCUMENTS.md) for the document-management rules.
 | GET | `/` | Patient, Doctor | List emergency access records |
 | DELETE | `/:id` | Patient | Manually revoke an emergency grant |
 
+### Appointments (`/api/appointments`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/slots` | Verified Doctor | Publish a bookable time |
+| GET | `/slots` | Doctor | List own slots |
+| DELETE | `/slots/:id` | Doctor (owner) | Withdraw a slot |
+| GET | `/available` | Patient | Open slots of verified doctors |
+| GET | `/my` | Patient | Own bookings |
+| PATCH | `/slots/:id/book` | Patient | Book an open slot |
+| PATCH | `/slots/:id/cancel-booking` | Patient (who booked) | Cancel own booking |
+
+See [API_APPOINTMENTS.md](docs/API_APPOINTMENTS.md).
+
 ### Lab (`/api/lab-links`, `/api/lab-reports`)
 See [API_LAB.md](docs/API_LAB.md) for endpoints.
 

@@ -2,6 +2,7 @@ import { BadgeAlert, Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, S
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import DashboardShell from '../../components/dashboard/DashboardShell';
+import DoctorSlotsPanel from '../../components/appointments/DoctorSlotsPanel';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import EmergencyAccessModal from '../../components/emergency/EmergencyAccessModal';
@@ -316,6 +317,8 @@ export default function DoctorDashboard() {
           </div>
         )}
       </div>
+
+      <DoctorSlotsPanel />
       </DashboardShell>
 
       <DocumentPreviewModal

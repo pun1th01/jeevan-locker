@@ -93,11 +93,20 @@ const ROUTES: readonly RouteSpec[] = [
   { method: 'get', path: '/api/notifications', access: ALL },
   { method: 'patch', path: '/api/notifications/read-all', access: ALL },
   { method: 'patch', path: '/api/notifications/:id/read', access: ALL },
+
+  { method: 'post', path: '/api/appointments/slots', access: ['doctor'] },
+  { method: 'get', path: '/api/appointments/slots', access: DOCTOR_ANY_VERIFICATION },
+  { method: 'delete', path: '/api/appointments/slots/:id', access: DOCTOR_ANY_VERIFICATION },
+  { method: 'get', path: '/api/appointments/available', access: ['patient'] },
+  { method: 'get', path: '/api/appointments/my', access: ['patient'] },
+  { method: 'patch', path: '/api/appointments/slots/:id/book', access: ['patient'] },
+  { method: 'patch', path: '/api/appointments/slots/:id/cancel-booking', access: ['patient'] },
 ];
 
 /** Where each routes file is mounted (mirrors app.ts). A new routes file needs an entry here AND access rows above. */
 const ROUTER_PREFIX: Record<string, string> = {
   'admin.routes.ts': '/api/admin',
+  'appointment.routes.ts': '/api/appointments',
   'audit.routes.ts': '/api/audit',
   'auth.routes.ts': '/api/auth',
   'consent.routes.ts': '/api/consents',
