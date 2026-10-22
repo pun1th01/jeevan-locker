@@ -120,6 +120,11 @@ See [API_ADMIN.md](docs/API_ADMIN.md) for full endpoint details.
 | GET | `/:id/download` | Authenticated | Download decrypted document |
 | GET | `/:id/integrity` | Authenticated | Verify blockchain integrity |
 | PATCH | `/:id/share` | Patient | Direct share with a doctor |
+| PATCH | `/:id/unshare` | Patient (owner) | Remove one doctor's direct share |
+| PATCH | `/:id/metadata` | Patient (owner) | Change the title or description |
+| DELETE | `/:id` | Patient (owner) | Soft delete: ends every doctor's access, anchored on-chain |
+
+See [API_DOCUMENTS.md](docs/API_DOCUMENTS.md) for the document-management rules.
 
 ### Consent (`/api/consents`)
 | Method | Endpoint | Access | Purpose |
@@ -139,7 +144,20 @@ See [API_ADMIN.md](docs/API_ADMIN.md) for full endpoint details.
 | GET | `/` | Patient, Doctor | List emergency access records |
 | DELETE | `/:id` | Patient | Manually revoke an emergency grant |
 
-### Lab (`/api/lab-links`, `/api/lab-reports`)
+### Appointments (`/api/appointments`)
+| Method | Endpoint | Access | Purpose |
+|--------|----------|--------|---------|
+| POST | `/slots` | Verified Doctor | Publish a bookable time |
+| GET | `/slots` | Doctor | List own slots |
+| DELETE | `/slots/:id` | Doctor (owner) | Withdraw a slot |
+| GET | `/available` | Patient | Open slots of verified doctors |
+| GET | `/my` | Patient | Own bookings |
+| PATCH | `/slots/:id/book` | Patient | Book an open slot |
+| PATCH | `/slots/:id/cancel-booking` | Patient (who booked) | Cancel own booking |
+
+See [API_APPOINTMENTS.md](docs/API_APPOINTMENTS.md).
+
+### Lab (`/api/lab-links`, `/api/lab/reports`)
 See [API_LAB.md](docs/API_LAB.md) for endpoints.
 
 ### Admin (`/api/admin`)
@@ -188,44 +206,31 @@ EMERGENCY_EXPIRY_BATCH_LIMIT=200
 ```bash
 git clone <repository-url>
 cd jeevan-locker
-
-# Install server dependencies
-cd server
-npm install
-
-# Install client dependencies
-cd ../client
-npm install
+npm install        # installs server/ and client/ exactly as locked (npm ci in each)
 ```
 
 ## 16. Environment Setup
 
-Copy the example environment file:
-```bash
-cd server
-cp .env.example .env
-```
-Ensure `JWT_SECRET` is set. The one-command startup script will automatically handle generating the `DOCUMENT_MASTER_KEY` and populating the blockchain addresses.
+Nothing to do for development. On first start, `npm run dev` creates `server/.env` from `server/.env.example`, with a random `JWT_SECRET` and `DOCUMENT_MASTER_KEY`, and writes the contract addresses on every start. The two generated secrets are kept on later starts: a new master key would make every stored document unreadable.
 
 ## 17. One-Command Development Startup
 
-To run the entire stack (Blockchain, API, and Client) with automatic configuration:
-
 ```bash
-cd server
-node scripts/dev-startup.js
+npm run dev        # from the repository root
 ```
 
 **What this does:**
-1. Spawns the local Hardhat blockchain node.
-2. Waits for RPC readiness.
-3. Compiles and deploys the `DocumentRegistry` and `AuditAnchorRegistry` contracts.
-4. Extracts the contract addresses and writes them to `server/.env`.
-5. Generates `DOCUMENT_MASTER_KEY` in `.env` if missing.
-6. Starts the Express API (`npm run dev`), which automatically seeds demo users, documents, and on-chain hashes.
-7. Starts the Vite React client (`npm run dev`).
+1. Refuses to start if port 8545, 5000 or 5173 is already in use, and says which.
+2. Spawns the local Hardhat node and waits until it answers.
+3. Compiles and deploys `DocumentRegistry` and `AuditAnchorRegistry`, and writes both addresses (plus the chain URL and the dev account key) to `server/.env`.
+4. Starts the API (`npm run dev` in `server/`): an in-memory MongoDB, seeded with the demo accounts and ten demo documents, each registered on-chain.
+5. Starts the Vite client and prints `http://localhost:5173` once both answer.
 
-*If startup fails, ensure port 8545, 5000, and 5173 are free, and verify `.env` formatting.*
+Ctrl+C stops all three, child processes included (on Windows too).
+
+### Demo accounts
+
+The seed (`server/src/utils/seedDemoUsers.ts`, which holds the passwords) creates `admin@jeevanlocker.dev`, `doctor@jeevanlocker.dev` and `doctor2@jeevanlocker.dev` (both verified), `patient@jeevanlocker.dev`, `patient2@jeevanlocker.dev`, and the lab `lab@jeevanlocker.dev` with an active link to both patients and two verified lab reports. They exist only in development, in the in-memory database, and are re-created on every start.
 
 ## 18. Manual Development Startup
 
@@ -261,14 +266,14 @@ In `server/src/config/db.ts`, if `NODE_ENV` is `development` AND the `MONGO_URI`
 
 ## 20. Testing
 
-JeevanLocker features a robust automated test suite (934 tests) utilizing Vitest, Supertest, and Hardhat. The test suite automatically provisions its own in-memory MongoDB and Hardhat network, ignoring your `.env`.
+JeevanLocker has an automated suite of 1,086 tests in 21 files, using Vitest, Supertest and a real Hardhat chain. It starts its own in-memory MongoDB and Hardhat node and ignores your `.env`. A full run takes about two to three minutes.
 
 To run the test suite:
 ```bash
-cd server
-npm test
+npm test           # from the repository root (or: cd server && npm test)
+npm run check      # strict type checks, the anchor-preimage check, client tsc and eslint
 ```
-The suite fully covers access control, break-glass workflow, encryption at rest, file validation, route guards, and blockchain anchoring logic. See [TESTING.md](docs/TESTING.md) for details.
+The suite covers access control on every route for every role, encryption at rest, on-chain anchoring, break-glass, upload hardening and rate limits, the demo seed, concurrent decisions, and a final adversarial pass. Every claim it makes, and the evidence that each test can fail, is in [TESTING.md](docs/TESTING.md). The same checks run in CI on every pull request (`.github/workflows/ci.yml`).
 
 ## 21. Build
 
@@ -288,9 +293,14 @@ npm run build
 
 - [Lab API Documentation](docs/API_LAB.md)
 - [Admin API Documentation](docs/API_ADMIN.md)
+- [Consent and Emergency Access API](docs/API_CONSENT_EMERGENCY.md)
+- [Document Management API](docs/API_DOCUMENTS.md)
+- [Appointments API](docs/API_APPOINTMENTS.md)
+- [On-chain Anchoring](docs/ANCHORING.md)
+- [Encryption at Rest](docs/ENCRYPTION.md)
 - [System Events Documentation](docs/EVENTS.md)
 - [Testing Architecture](docs/TESTING.md)
 
 ## 23. Project Status
 
-The Phase II implementation is feature-complete for demonstration purposes. The local blockchain integration, encryption at rest, lab workflows, and the 934-test automated suite are fully operational.
+The Phase II implementation is feature-complete for demonstration purposes. The local blockchain integration, encryption at rest, consent and break-glass workflows, lab workflows, document management, appointments and the 1,086-test automated suite are fully operational. A fresh clone starts with `npm install` and `npm run dev`, and every flow has been run end to end on one.

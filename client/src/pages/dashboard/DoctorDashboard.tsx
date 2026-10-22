@@ -2,6 +2,7 @@ import { BadgeAlert, Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, S
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import DashboardShell from '../../components/dashboard/DashboardShell';
+import DoctorSlotsPanel from '../../components/appointments/DoctorSlotsPanel';
 import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import EmergencyAccessModal from '../../components/emergency/EmergencyAccessModal';
@@ -11,16 +12,16 @@ import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
 import { consentService } from '../../services/consent.service';
-import type { MedicalDocument } from '../../types/document';
+import type { DoctorMedicalDocument } from '../../types/document';
 import type { EmergencyAccess, GrantEmergencyAccessInput } from '../../types/emergencyAccess';
 import type { ConsentGrant, RequestConsentInput } from '../../types/consent';
 
 export default function DoctorDashboard() {
   // Mirrors the server gate: unverified doctors get 403 on lookup, consent request, and break-glass.
   const isVerified = useAuthStore((state) => state.user?.verified ?? false);
-  const [documents, setDocuments] = useState<MedicalDocument[]>([]);
-  const [selectedDocument, setSelectedDocument] = useState<MedicalDocument | null>(null);
-  const [previewDocument, setPreviewDocument] = useState<MedicalDocument | null>(null);
+  const [documents, setDocuments] = useState<DoctorMedicalDocument[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<DoctorMedicalDocument | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<DoctorMedicalDocument | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -31,6 +32,8 @@ export default function DoctorDashboard() {
   const [emergencyNotice, setEmergencyNotice] = useState<string | null>(null);
   const [activeEmergencyAccess, setActiveEmergencyAccess] = useState<EmergencyAccess | null>(null);
   const [myConsents, setMyConsents] = useState<ConsentGrant[]>([]);
+  // The doctor's live break-glass grants, so the selected record can say truthfully how access was obtained.
+  const [liveGrants, setLiveGrants] = useState<EmergencyAccess[]>([]);
   const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
   const [isRequestingConsent, setIsRequestingConsent] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -49,7 +52,7 @@ export default function DoctorDashboard() {
     setPageError(null);
 
     try {
-      setDocuments(await documentService.getMyDocuments());
+      setDocuments(await documentService.getMyDocuments<DoctorMedicalDocument>());
     } catch (error) {
       setPageError(getApiErrorMessage(error));
     } finally {
@@ -65,14 +68,23 @@ export default function DoctorDashboard() {
     }
   }, []);
 
+  const loadLiveGrants = useCallback(async () => {
+    try {
+      setLiveGrants(await emergencyAccessService.list('ACTIVE'));
+    } catch (error) {
+      setEmergencyError(getApiErrorMessage(error));
+    }
+  }, []);
+
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       void loadDocuments();
       void loadMyConsents();
+      void loadLiveGrants();
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loadDocuments, loadMyConsents]);
+  }, [loadDocuments, loadMyConsents, loadLiveGrants]);
 
   useEffect(() => {
     if (!accessNotice) {
@@ -82,6 +94,14 @@ export default function DoctorDashboard() {
     const timeoutId = window.setTimeout(() => setAccessNotice(null), 3600);
     return () => window.clearTimeout(timeoutId);
   }, [accessNotice]);
+
+  /** How this doctor can read the document, from what they hold: a live grant, an approved consent, or else a direct share. */
+  const describeAccess = (documentId: string) => {
+    const grant = liveGrants.find((candidate) => candidate.documentId === documentId && candidate.status === 'ACTIVE');
+    if (grant) return `You are using emergency (break-glass) access until ${formatDate(grant.expiresAt)}; the patient has been notified and can end it.`;
+    if (myConsents.some((consent) => consent.document.id === documentId && consent.status === 'APPROVED')) return 'The patient approved your access request.';
+    return 'The patient shared this document with you.';
+  };
 
   const patientCount = useMemo(
     () => new Set(documents.map((document) => document.uploadedBy.id)).size,
@@ -102,7 +122,7 @@ export default function DoctorDashboard() {
     setPageError(null);
 
     try {
-      const document = await documentService.getDocument(documentId);
+      const document = await documentService.getDocument<DoctorMedicalDocument>(documentId);
       setSelectedDocument(document);
       setDocuments((currentDocuments) =>
         currentDocuments.map((currentDocument) => (currentDocument.id === document.id ? document : currentDocument))
@@ -122,11 +142,12 @@ export default function DoctorDashboard() {
     try {
       const { message, emergencyAccess } = await emergencyAccessService.grant(input);
       setActiveEmergencyAccess(emergencyAccess);
+      setLiveGrants((current) => [emergencyAccess, ...current.filter((grant) => grant.id !== emergencyAccess.id)]);
       // The server states the configured window; do not restate it here or the two drift apart.
       setEmergencyNotice(`${message}. All activity is logged, and the patient can end it sooner.`);
 
       try {
-        const document = await documentService.getDocument(emergencyAccess.documentId);
+        const document = await documentService.getDocument<DoctorMedicalDocument>(emergencyAccess.documentId);
         setDocuments((currentDocuments) => {
           const alreadyListed = currentDocuments.some((currentDocument) => currentDocument.id === document.id);
           return alreadyListed
@@ -306,7 +327,7 @@ export default function DoctorDashboard() {
                 {selectedDocument.uploadedBy.email}
               </p>
               <p className="mt-3 rounded-md border border-emerald-300/15 bg-emerald-300/10 px-3 py-2 text-xs leading-5 text-emerald-100">
-                Access to this document was granted by the patient and is recorded in audit logs when opened.
+                {describeAccess(selectedDocument.id)} Every opening is recorded in the audit log.
               </p>
             </div>
           </div>
@@ -316,6 +337,8 @@ export default function DoctorDashboard() {
           </div>
         )}
       </div>
+
+      <DoctorSlotsPanel />
       </DashboardShell>
 
       <DocumentPreviewModal

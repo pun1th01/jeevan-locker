@@ -20,6 +20,7 @@ interface PopulatedDocumentReference {
   title: string;
   originalFileName: string;
   createdAt: Date;
+  deletedAt?: Date;
 }
 
 type AccessLogWithReferences = Omit<IAccessLog, 'userId' | 'targetDocument'> & {
@@ -32,6 +33,8 @@ interface AuditDocumentSummary {
   title: string;
   originalFileName: string;
   createdAt: string;
+  /** Set when the owning patient soft-deleted the document; the admin feed flags it. */
+  deletedAt?: string;
 }
 
 interface AuditLogResponse {
@@ -96,6 +99,7 @@ const serializeDocumentReference = (
       title: document.title,
       originalFileName: document.originalFileName,
       createdAt: document.createdAt.toISOString(),
+      ...(document.deletedAt ? { deletedAt: document.deletedAt.toISOString() } : {}),
     };
   }
 
@@ -122,20 +126,22 @@ const serializeAccessLog = (log: IAccessLog): AuditLogResponse => {
 };
 
 export const getAuditSummary: RequestHandler = asyncHandler(async (_req, res) => {
-  const [totalUsers, totalDocuments, recentActivity] = await Promise.all([
+  const [totalUsers, totalDocuments, deletedDocuments, recentActivity] = await Promise.all([
     User.countDocuments(),
-    MedicalDocument.countDocuments(),
+    MedicalDocument.countDocuments({ deletedAt: null }),
+    MedicalDocument.countDocuments({ deletedAt: { $ne: null } }),
     AccessLog.find()
       .sort({ timestamp: -1 })
       .limit(50)
       .populate('userId', 'name email role verified createdAt')
-      .populate('targetDocument', 'title originalFileName createdAt'),
+      .populate('targetDocument', 'title originalFileName createdAt deletedAt'),
   ]);
 
   res.json({
     summary: {
       totalUsers,
       totalDocuments,
+      deletedDocuments,
       recentActivity: recentActivity.map(serializeAccessLog),
     },
   });

@@ -1,8 +1,8 @@
 import { api } from '../lib/api';
-import type { AnchorListResponse, AnchorVerification, ChainAnchorRow, ChainAnchorStatus } from '../types/anchor';
+import type { AnchorListResponse, AnchorRecordType, AnchorVerification, ChainAnchorRow, ChainAnchorStatus } from '../types/anchor';
 
 export const anchorService = {
-  async list(params: { status?: ChainAnchorStatus; recordType?: 'consent' | 'emergency'; limit?: number } = {}): Promise<AnchorListResponse> {
+  async list(params: { status?: ChainAnchorStatus; recordType?: AnchorRecordType; limit?: number } = {}): Promise<AnchorListResponse> {
     const { data } = await api.get<AnchorListResponse>('/admin/anchors', { params });
     return data;
   },

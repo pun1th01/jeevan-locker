@@ -81,20 +81,20 @@ These are not claims about JeevanLocker; they are what makes every other result 
 
 ## 3. Claims and the tests that back them
 
-Six suites: access control, encryption, anchoring, break-glass, hardening and the demo seed. Every claim is one sentence about the system; the proof column says what the test actually does.
+Eight suites: access control, encryption, anchoring, break-glass, hardening, the demo seed, concurrent decisions and the final security pass. Every claim is one sentence about the system; the proof column says what the test actually does.
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
-### 3.1 Access control — suite 1 (`test/access/`, 803 tests)
+### 3.1 Access control — suite 1 (`test/access/`, 926 tests)
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
 | C1 | Every HTTP endpoint has an explicit, reviewed access rule; an endpoint added without one fails the suite. | Reads the router stack of every routes file mounted on the app (Express keeps each route's path and methods) and requires an exact match with the hand-written access table. It fails on a route without a row, a row without a route, a routes file without a mount prefix, a router mounted that did not come from a routes file, and nested routers the scan cannot see. | `inventory.test.ts` → *route inventory* |
-| C2 | Every endpoint except health, register and login refuses a request that carries no token. | Each of the 32 protected routes, called anonymously: `401 Authentication token is required`. | `inventory.test.ts` → *gate grid* |
-| C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 35 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the three gated routes gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
+| C2 | Every endpoint except health, register and login refuses a request that carries no token. | Each of the 46 protected routes, called anonymously: `401 Authentication token is required`. | `inventory.test.ts` → *gate grid* |
+| C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 49 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the four gated routes (lookup, consent request, break-glass, publishing an appointment slot) gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
 | C4 | Identity and role are read from the database on every request. The role inside a token is ignored, and forged, expired, malformed, wrong-secret and deleted-user tokens are all refused. | A patient's token re-signed to claim `admin` still gets 403 on admin routes; an admin's token claiming `patient` still gets 200; a lab's token claiming `doctor` still cannot look up or break glass. Wrong secret, expired, unknown user, missing `userId`, non-JWT and non-Bearer headers each get 401 with their documented message. A valid token stops working the moment its user is deleted. | `inventory.test.ts` → *tokens* |
 | C5 | A document is readable by its owner, by an admin, and by a doctor holding a share, an approved consent or a live break-glass grant — and by nobody else. | A world of 7 documents (patient uploads, lab reports, a second patient's records) and 18 actors covering every relationship. Every actor tries every document on each of the 4 read endpoints (`/:id`, `/view`, `/download`, `/integrity`): 504 cells. An allowed cell must return 200 with the right content: the right id, an `inline` or `attachment` disposition, `verified: true` from the chain. A refused cell must return exactly `403 {message}` and nothing else. Unknown and malformed ids give every role `404 Document not found`. | `documents.test.ts` → *read matrix* |
-| C6 | A lab reads only the reports it issued, and never learns which doctors a patient shared them with. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. Every lab response — `GET /:id`, `my-documents` — carries no `sharedWithDoctors`, while every other reader's does. A report the patient shared with two doctors leaks neither doctor's id nor email to its lab on `/:id`, `/view`, `/download`, `/integrity`, `my-documents` or the upload response itself; the patient still sees both. | `documents.test.ts` → *read matrix*, *list mirrors decision*, *a lab never learns…* |
+| C6 | A lab reads only the reports it issued, and never learns which doctors a patient shared them with. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. Every lab response — `GET /:id`, `my-documents` — carries no `sharedWithDoctors` (since C59, neither does a doctor's; the patient and admins still receive it). A report the patient shared with two doctors leaks neither doctor's id nor email to its lab on `/:id`, `/view`, `/download`, `/integrity`, `my-documents` or the upload response itself; the patient still sees both. | `documents.test.ts` → *read matrix*, *list mirrors decision*, *a lab never learns…* |
 | C7 | Consent and break-glass grant access only while live. Pending, rejected and revoked consents give nothing, and neither do revoked or lapsed grants — including a lapsed grant whose row still says `ACTIVE` because nothing has swept it yet. | One doctor per state, each refused on every read endpoint. | `documents.test.ts` → *read matrix* |
 | C8 | Doctor verification gates *initiating* access, not access already given: an unverified doctor keeps documents shared, consented or granted to them. | A doctor shared a document while unverified, and a doctor who obtained consent and a grant and was then unverified, both read exactly those documents. | `documents.test.ts` → *read matrix* |
 | C9 | A role the system does not know receives nothing, refused with the same clean 403 as any other denial; the role switch has no default that grants, and adding a role without a branch fails compilation. | A user row with role `superadmin` (inserted past the schema enum) gets exactly `403 {message}` on every read endpoint for every document, and a 403 on the list. It never gets a 500. The compile-time half was checked by adding a fifth role to `USER_ROLES`: `tsc` failed at both role switches. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
@@ -106,6 +106,14 @@ Six suites: access control, encryption, anchoring, break-glass, hardening and th
 | C15 | Patient lookup never reveals whether an email or id belongs to another role. | Probes: an unknown email; a doctor's, an admin's and a lab's email; an unknown id; a doctor's, an admin's and a lab's id; an email prefix. On both lookup endpoints (`GET /patients/lookup`, `POST /lab-links`) every probe gets the same status, body, content type and content length. Positive controls: the patient is found by email, in any case and with surrounding spaces, and by id. | `workflows.test.ts` → *patient lookup* |
 | C16 | A consent, grant or lab link can be decided only by the patient it names and seen only by the parties to it; a doctor cannot pair one patient with another patient's document. | Another patient's approve, reject or revoke is refused and the record keeps its state. Another patient's revoke of a live grant is refused and the doctor still reads. Third parties' lists never contain the record. A mismatched patient/document pair is refused and creates nothing. | `workflows.test.ts` → *consent*, *break-glass*, *lab links* |
 | C17 | A lab can upload into a patient's vault only while that patient's link is `ACTIVE`, and a refused upload stores nothing. | Uploads while pending, rejected, revoked or never linked are refused and leave no document row. The same lab succeeds while `ACTIVE`, and a report addressed to a non-patient id is 404. | `workflows.test.ts` → *lab links* |
+| C54 | Unsharing removes one doctor's direct share and nothing else; only the owning patient can do it, and it is recorded once. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §3. After the owner unshares, the doctor gets 403 on all four read paths and the document leaves their list. The response is `{ message, document }` without the doctor, which is what the dashboard reads, and one `DOCUMENT_UNSHARED` row names the doctor and patient. Another doctor's share stays. A doctor who also holds an approved consent, and one who also holds a live break-glass grant, keep reading after the unshare: the audited method becomes `consent` or `emergency`, and the consent and grant rows are untouched. Another patient gets 403; the shared doctor, a lab and an admin are refused by role. Each refusal leaves the share list and the audit log unchanged. Unsharing a doctor who has no share is a 200 that writes nothing. Five concurrent unshares write one row. | `documentManagement.test.ts` → *C54* |
+| C55 | Only the owning patient can change a document's title and description, and nothing else about it. A lab report keeps everything its lab issued, and the lab never sees the patient's description. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §4. A rename plus description (trimmed) shows on `GET /:id` and in the list, `/integrity` still verifies, and one `DOCUMENT_UPDATED` row records the fields and the previous title. An empty description clears it; a title-only edit keeps it. Limits: 500 characters accepted, 501 refused; the title must be 1–120; non-strings and an empty body are refused. Eight other fields (`uploadedBy`, `sharedWithDoctors`, chain fields, lab-report fields, `mimeType`) are each refused with 400. On a lab report the description is editable, a new title is 403, and every report field is unchanged. The issuing lab's `GET /:id` and list carry no `description`; a doctor with access sees it. Another patient gets 403; the doctor, the issuing lab and an admin are refused by role. A refusal changes no stored field and audits nothing, and a save of unchanged values audits nothing. | `documentManagement.test.ts` → *C55* |
+| C56 | A notification is reachable only by its recipient, and another user's notification id looks exactly like one that does not exist. | Notifications are produced the real way: the boot-time listener is registered and real consent and lab-link requests emit the events. Each user's list is exactly their own rows, and `unreadCount` counts only those. Admins, doctors and labs with no events get an empty list, because admins are not special here. Every serialized notification carries exactly the seven documented fields (no recipient, actor id or dedupe key). Marking another user's notification read gets `404`, with the same body and content length as a random unknown id, for a patient, an admin, a doctor and a lab; the row stays unread. A malformed id is the same `400` for everyone. Mark-all-read changes only the caller's rows. The recipient's own mark-read returns the updated row and emits no deprecated-option warning (the old `{ new: true }`). | `notifications.test.ts` |
+| C57 | Deleting a document ends every doctor's access through audited, anchored transitions; the document's own chain record stays, and the deletion is anchored too. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §5 and [ANCHORING.md](ANCHORING.md) §2. One document is shared with one doctor, consented to a second, pending for a third and under break-glass for a fourth; then the owner deletes it. The response counts what it ended. For the patient and all four doctors: `404 Document not found` on all four read paths, absent from every list, and share, unshare, metadata and a second delete are also 404. The approved consent is `REVOKED`, the pending one `REJECTED` (never approved), and the grant `REVOKED` by the patient. Each has exactly one audit row with `cause: DOCUMENT_DELETED` and one anchor. One `DOCUMENT_DELETED` row carries the counts. The `document:<id>:DELETED` anchor's preimage equals the one the test writes out from ANCHORING.md §2. After the worker runs: the chain holds its digest, the admin verify view agrees three ways, the `recordType=document` filter lists it, and the proof is written back onto the document. An admin still reads the document with `deletedAt`, sees it flagged in the list and the audit feed, and `/integrity` still verifies against the chain. A new consent request or break-glass on it is 404 and creates nothing; the patient lookup no longer lists it. The doctor whose consent ended gets one `consent.revoked` event. | `documentDeletion.test.ts` → *C57* |
+| C58 | Only the owner deletes, exactly once; the issuing lab keeps its report without being told; a lost deletion anchor is rebuilt. | Another patient is refused with 403, and the shared doctor, a lab and an admin by role. The document is unchanged, nothing is audited and the doctor still reads. Five concurrent deletes give one 200, four 404s, one `DOCUMENT_DELETED` row and one anchor. A lab report the patient deletes is 404 to the patient, but its issuing lab still reads it, verifies it and lists it, with no `deletedAt`. Deleting the DELETED anchor row and running boot reconciliation rebuilds it with the same key, preimage and digest, exactly once. | `documentDeletion.test.ts` → *C58* |
+| C59 | Every document response names each person with exactly the fields that reader is specified to receive. Only the owning patient and admins receive `sharedWithDoctors`. | Specification: [API_DOCUMENTS.md](API_DOCUMENTS.md) §6, written into the read matrix as a per-reader table. Every served `GET /:id` cell (C5) and every document in every actor's list (C11) must have exactly those key sets: `uploadedBy` is `{id, name}` to the patient and the lab, and `{email, id, name}` to a doctor. Each `sharedWithDoctors` entry is `{email, id, name}` to the patient; a doctor and a lab receive no `sharedWithDoctors`. `uploadedByLab` is `{id, name, organisation}`. An admin gets full account records. This replaces the earlier C6 rule ("every reader but a lab receives the share list"), which had let doctors see each other. | `documents.test.ts` → *read matrix*, *list mirrors decision* |
+| C60 | Consents, break-glass grants and lab links carry exactly their documented fields to both parties, and nobody's email, role or verification flag. | Specification: the `Consent`, `EmergencyAccess` and `LabLink` shapes in API_CONSENT_EMERGENCY.md §3.2, §4.2 and API_LAB.md §2. Checked: every response the doctor and the patient receive for consents (the request, each decision, `/my`, `/received`, `/pending`), for grants (the grant, the re-grant after a revoke, both lists, the revoke), and every response the lab and the patient receive for lab links. Each has its required fields, no undocumented field, and people and documents exactly as `{id, name}` (a lab adds `organisation`) or `{id, title}`. No response contains an email address or an `email`, `verified` or `role` key. | `responseShapes.test.ts` |
+| C61 | Appointment slots: only a verified doctor publishes; only the slot's doctor withdraws it and only the booking patient cancels the booking; a slot is booked at most once; patients see only open, future slots of doctors verified now. | Specification: [API_APPOINTMENTS.md](API_APPOINTMENTS.md). Full flow: publish, then the slot appears as available (doctor as `{id, name, organisation}`, no patient), is booked, shows the patient's name to the doctor and in the patient's list, and leaves the available list. Every step is audited once, and no email appears in any of it. Five patients booking at once give one 200 and four 409s, one stored patient and one audit row. Another doctor's cancel is 403 and the slot stays `BOOKED`. The owner's cancel ends the booking, and `CANCELLED` is terminal (a second cancel and a booking are both 409). Another patient's cancel-booking is 403; the owner's reopens the slot, and someone else can then book it. Roles: a doctor cannot book; a patient cannot publish or withdraw; an unverified doctor's publish is 403 with the verification message and creates nothing. Validation: past, beyond 90 days, not a date, 5 or 121 minutes, fractional, same start, overlapping — each refused, one slot stored. The available list omits a past slot and a doctor unverified since publishing, and booking either is 409. Each list is scoped to its caller; unknown and malformed ids are 404 and 400. | `appointments.test.ts` |
 
 ### 3.2 Encryption at rest — suite 2 (`test/encryption/vault.test.ts`, 30 tests)
 
@@ -174,6 +182,34 @@ The viva runs on the development seed, and until this suite nothing executed it 
 | C48 | Seeded records carry their seeded dates. | Every document's `createdAt` equals its hand-written seeded date (2–25 May 2026), after the first seed and after a re-seed of existing rows. | `seed.test.ts` → *C48*, *C49* |
 | C49 | Re-seeding is idempotent, including against a chain that already holds the registrations. | A second seed changes no count and no transaction hash (users, documents, links, audit rows). Rows whose chain fields were lost are refilled with the **original** transactions from the event log, not re-sent. A fresh database against the same chain (a dev API restart) registers the new ids with no conflict and every document verifies. | `seed.test.ts` → *C49* |
 | C50 | The seed never breaks boot and never overwrites the chain. | With the RPC unreachable the seed completes, all ten documents stay unregistered, a warning says so, and the next seed with the chain up registers them all. An id already registered with a different hash is reported by name (`SEED CONFLICT`), left unregistered while the other nine register, and the chain still holds the original hash. | `seedFailures.test.ts` |
+
+### 3.7 A decision takes effect once — suite 7 (`test/races/decisions.test.ts`, 10 tests)
+
+Specification: [API_CONSENT_EMERGENCY.md](API_CONSENT_EMERGENCY.md) §3 and [API_LAB.md](API_LAB.md) §3 (*Concurrent decisions*), held to the same standard as break-glass (C34, C36): one guarded write decides, and everything after it happens once. Every race goes over HTTP to the real app; nothing is intercepted. Which of two concurrent decisions wins is not asserted, since either is correct. What the tests forbid is both winning.
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C51 | Concurrent decisions on one consent take effect exactly once: one wins, and the record, its audit trail, its anchor and its notification all say the same thing. | 15 rounds of approve ×2 and reject ×2 fired together at a fresh pending consent: one `200` and three `409`s each round. The row carries the winner's status and **only** the winner's timestamp. There is exactly one decision audit row, one non-`REQUESTED` anchor row and one event, each matching the winner. Five concurrent revokes of an approved consent give one `200`, one `CONSENT_REVOKED` row, one `REVOKED` anchor and one event. Five concurrent requests from one doctor for one document give one `201`, one row, one `CONSENT_REQUESTED` row and one anchor. Another patient racing the owner is refused and leaves no row. | *C51* |
+| C52 | Concurrent decisions on one lab link take effect exactly once. | 15 rounds of approve ×2 and reject ×2: one `200` per round, the winner's status and timestamp only, one audit row, and the `lab.link.approved` event only when approval won. Five concurrent revokes: one `200`, one `LAB_UNLINKED`. Five concurrent requests: one `201`, one row, one `LAB_LINK_REQUESTED`, one event. | *C52* |
+| C53 | The database holds at most one live consent per doctor and document, and one open link per lab and patient, whatever their status. Closed history is unlimited. | Rows inserted directly, with no handler and so no pre-check, as a second server process could: a `PENDING` consent beside an `APPROVED` one, and a second `APPROVED`, are refused with a duplicate-key error. The same holds for a `PENDING` link beside an `ACTIVE` one. Any number of `REJECTED`/`REVOKED` rows are accepted. After a revoke, the same doctor or lab can request and be approved again over HTTP. | *C53* |
+
+### 3.8 The final security pass — suite 8 (`test/security/adversarial.test.ts`, 7 tests)
+
+Run after everything else had landed, since the newest routes add endpoints and ownership rules. Every role attacked every write route and every id route; findings and fixes are in §5. Object-level authorization is proved resource by resource elsewhere, so this suite pins only what the pass itself found:
+
+| Area attacked | Where it is proved |
+|---|---|
+| Role gates on all routes, including the new document, appointment and notification routes | C1–C3 (the inventory grid) |
+| Lab-link panel: deciding or revoking another patient's link, or another lab revoking one; races | C16, C52 |
+| Notifications: reading or marking another user's, list scoping | C56 |
+| Admin UI: creating admins, verifying non-doctors, forged role claims | C4, C14 |
+| Document management: unshare, metadata, delete, and response minimisation | C54–C55, C57–C59 |
+| Consents, grants, lab links: decisions by the wrong party, response shapes | C16, C51–C53, C60 |
+| Appointments | C61 |
+
+| ID | Claim | Proof | Test |
+|---|---|---|---|
+| C62 | A client's mistake is always a clean 4xx: never a 5xx, never a stack trace, never parser or validator internals. A document whose file name is not ASCII can still be opened. | Fourteen write routes, each called by a role that reaches its handler with real ids, get six hostile bodies: an array, operator-shaped values (`{$ne: null}`, `{$gt: ""}`) in every field, 10,000-character strings, wrongly typed numbers and dates, and `__proto__`/`constructor.prototype` keys. None answers 5xx or with a stack, and `Object.prototype` stays clean. Eleven id routes given five non-ids (including `%00` and an encoded traversal) all answer 400 or 404. Malformed JSON gives exactly `400 {message: 'Request body is not valid JSON'}`; a 1.1 MB body gives `413 {message: 'Request body is too large'}`; an unsupported charset (415) carries no stack. A field-validation refusal has one plain string per field. An upload title of 121 characters is refused by name and leaves no file and no row. A Devanagari file name round-trips exactly. `/view` and `/download` answer 200 with a response head that is printable ASCII byte for byte (read from the raw socket), and `filename*` decodes to the exact name. Quotes, semicolons, non-ASCII and path segments cannot break out of the header, with the same result on every platform. | `adversarial.test.ts` |
 
 ---
 
@@ -245,6 +281,53 @@ A test that has never been seen failing proves little. Each change below was mad
 | Skip the `CHAIN_ANCHOR_FAILED` audit row | code | C31 (overwrite case) and C33 |
 | Make the consent request send its anchor synchronously | code | C30 (the request failed during the outage), plus C28, C32 and C33, which all rely on the request not touching the chain |
 | Remove a variable from the pinned test environment | harness | G1, naming the variable and the file that reads it |
+| Consent and lab-link decisions by read → check → save (the previous code) | code | C51 and C52: both 15-round approve/reject races and both concurrent-revoke tests. The request races and C53 still pass, because the unique index already stopped duplicate requests. |
+| Put `status` back into the unique keys (the previous indexes) | code | C53: a `PENDING` row inserted beside an `APPROVED`/`ACTIVE` one is accepted |
+| Unshare without the owner check | code | C54, another patient's unshare |
+| Unshare also revokes the doctor's approved consents | code | C54, the consent-and-grant survival test |
+| Unshare audits whether or not it removed anything | code | C54: the no-op unshare and the five concurrent unshares |
+| Metadata ignores unknown fields instead of refusing them | code | C55, the eight forbidden fields |
+| Metadata without the owner check | code | C55, another patient's edit |
+| A lab report's title may be changed | code | C55, the lab-report test |
+| `description` sent to labs too | code | C55, the issuing lab's read and list |
+| Description limit 500 → 2000 (the dashboard's old textarea limit) | code | C55, the 501-character case |
+| Mark-read not scoped to the recipient | code | C56: another user's mark-read (the row became read) |
+| Another user's notification id answered `403` instead of `404` | code | C56: the id-confirmation test |
+| Mark-all-read not scoped to the caller | code | C56: mark-all-read, and the recipient's own mark-read (nothing left unread) |
+| The notification list not scoped to the caller | code | C56: the list, the id-confirmation and the mark-all tests |
+| The serializer adds `recipientUserId` | code | C56: the exact field set |
+| The document lookup ignores `deletedAt` (the access decision's guard still on) | code | C57: every path answered 403 instead of 404; C58: the patient's own read of a deleted lab report |
+| The lookup **and** the access decision ignore `deletedAt` | code | C57 and C58, as above. The decision's guard alone is defence in depth: with the lookup filter in place, removing only the guard changes no HTTP answer. |
+| The patient's list keeps deleted documents; the doctor's list keeps them | code | C57 (each separately) |
+| The cascade skips consents | code | C57: the counts, the consent states, the anchors and the doctor's event |
+| The cascade skips break-glass grants | code | C57: the counts, the grant state and its anchor |
+| The deletion is not anchored | code | C57 (the preimage and the chain checks), C58 (one anchor per concurrent delete, reconciliation) |
+| The delete is not guarded on `deletedAt` | code | C58: five concurrent deletes all succeeded |
+| Delete without the owner check | code | C58: another patient's delete |
+| A consent request accepts a deleted document | code | C57: the new-request test |
+| The issuing lab loses its deleted report | code | C58, the lab test |
+| `deletedAt` sent to every reader | code | C58: the lab learns of the deletion |
+| Reconciliation ignores deleted documents | code | C58, the rebuild |
+| The DELETED preimage drops `deletedBy` | code | C57: the test's own §2 preimage; `verify:anchors` too |
+| Every reader gets full account records (the previous serializer) | code | C59: 26, namely every served non-admin `GET /:id` cell and every non-admin list |
+| Doctors receive `sharedWithDoctors` again (the previous rule) | code | C59: the 6 doctor `GET /:id` cells and the 5 doctor lists |
+| A lab receives the patient's email | code | C59: the 3 lab cells and 3 lab lists |
+| A patient receives the lab account's email | code | C59: the patients' lab-report cells and lists (5) |
+| Consent responses add the doctor's `role`; lab links add an `email` field to the patient; grants add the doctor's `verified` | code | C60: the consent tests (2), the lab-link test, the grant test |
+| Booking not guarded on status `OPEN` | code | C61: the five concurrent bookings (several 200s) and the cancelled-slot booking |
+| Withdrawing a slot without the owner check | code | C61: another doctor cancelled the slot |
+| Cancelling a booking without the owner check | code | C61: another patient cancelled the booking |
+| The available list includes unverified doctors | code | C61: the doctor unverified since publishing |
+| No overlap check | code | C61: the overlapping slot (the same-start case is still refused by the unique index) |
+| Publishing not gated on verification | code | C61: the unverified doctor's publish (and C3, that cell) |
+| Withdrawing a cancelled slot again (no status guard) | code | C61: the second cancel succeeded |
+| The previous `Content-Disposition` (the raw name in a Latin-1 header) | code | C62: the Devanagari round trip (the response head held control bytes) and the header-escape test |
+| multer reads file names as Latin-1 (its default) | code | C62: the stored name was mojibake |
+| No upload title length check (left to the model) | code | C62: a Mongoose `Validation failed` instead of the named rule |
+| body-parser errors not mapped (the previous handler) | code | C62: the parser's own message, with a stack |
+| A stack on every non-production error (the previous rule) | code | C62: the 415 unsupported-charset response |
+| Validation errors sent as Mongoose objects (the previous handler) | code | **Survived — unreachable.** Every controller now validates its input before the model does, so no HTTP request reaches this branch. The plain-string mapping stays as defence in depth; the shape clients actually receive is pinned by C62's field-validation test. |
+| The available list adds the `patient` field | code | **Survived — equivalent mutant.** The list holds only `OPEN` slots, which never have a patient, so the field can never appear; no test can tell the two apart. |
 
 ---
 
@@ -262,13 +345,31 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 - **Carry-forward: several server instances need database-enforced grant slots (option B).** The cap relies on the in-process lock, the same single-process assumption as the chain nonce mutex and the rate-limit store. With more than one instance, each live grant would need to take a numbered slot below the cap under a unique `{doctorId, slot}` index for `ACTIVE` grants.
 - **Deployment note for the new index:** a database that already holds duplicate live grants (reachable only through the old race) cannot build `one_active_grant_per_doctor_document` until they are expired or revoked. A fresh database is unaffected.
 - **Fixed: a chain outage during upload was reported as `500 Internal server error`, with a stack trace outside production.** The cleanup was already right. An unreachable node (connection refused, reset, timeout, DNS failure, or ethers `NETWORK_ERROR`/`TIMEOUT`) is now a `ChainUnavailableError`. It is answered centrally as `503 The blockchain network is unavailable right now. Please try again shortly.` with no stack, on patient uploads, lab-report uploads and `/integrity`. A transaction that reaches the chain and *reverts* stays a real error. The "chain not configured" 503 lost its stack trace the same way.
+- **Fixed: concurrent consent and lab-link decisions both took effect.** Found in the 2026-10-03 diagnosis (15 of 15 rounds) and now pinned by C51 and C52. An approve and a reject arriving together both returned `200`. The consent was left with `approvedAt` *and* `rejectedAt`, two audit rows, and both `APPROVED` and `REJECTED` anchored on-chain; the same race existed on lab links. The cause was the read → check → save the break-glass revoke had already moved away from. Each transition is now a guarded `updateOne` that succeeds only if it changed the row, and nothing is audited, anchored or notified unless it did. The unique indexes no longer include `status`, so a pending and an approved record for one pair cannot coexist either. Anchor preimages are unchanged: the audit row and the anchor are built from the stored row, re-read after the write. **Deployment note:** on a persistent database the old index keys (`…_status_1`) stay until dropped by hand. They are looser than the new ones and harmless.
+- **The final security pass (2026-10-21), suite 8.** No route answered a 5xx to any hostile body or id, and no cross-role attempt on the newest routes succeeded. Five findings, each fixed:
+  1. **Fixed: a document with a non-Latin file name could not be opened or downloaded.** multer read multipart file names as Latin-1, so `रिपोर्ट.pdf` was stored as mojibake. Node writes header values as Latin-1, so the raw name was cut into control bytes in `Content-Disposition` and the response was rejected. Names are now read as UTF-8. The header follows RFC 6266: an ASCII `filename` fallback plus the exact name in `filename*`. C62.
+  2. **Fixed: client errors carried stack traces outside production.** Malformed or oversized JSON (and any other 4xx reaching the generic handler) answered with the parser's message and a full stack, server paths included. These are now plain messages; a stack appears only on a 500, and only outside production. C62.
+  3. **Fixed: an over-long upload title was refused with validator internals** (`ValidatorError`, the quoted input), in an `errors` shape the client renders as `[object Object]`. The title is now checked by name, like the lab-report and metadata routes, and model validation errors map to one plain sentence per field. C62.
+  4. **Fixed (UI): the doctor dashboard said access was "granted by the patient" even under break-glass.** It now states the real route: emergency access until a given time, an approved request, or a direct share. Found by reading in the 2026-10-03 diagnosis; checked in the browser in the end-to-end run (§6): each of the three routes is worded correctly.
+  5. **Fixed (UI): the patient's share list did not distinguish self-registered doctor accounts no admin had verified.** Sharing stays the patient's decision, per the documented verification policy (API_ADMIN.md §3), so the server is unchanged. The list now marks such accounts *not verified* and puts them last. Checked in the browser in the end-to-end run (§6).
+
+  Accepted, unchanged: registration answers `409` for an email already in use (rate-limited, 5 per hour per address); repeated query keys (`?status=A&status=B`) fall back to the default filter; tokens live in browser storage (the "beyond a demo" list in the remaining-work plan).
 - **Fixed: a file of exactly 5 MB was refused.** The upload dialog accepts a file of exactly 5 MB (it rejects only `size > 5 MB`), but multer's limit, as busboy applies it, rejects a file that *reaches* the configured size. The server now configures `5 MB + 1` bytes, so exactly 5,242,880 bytes is accepted and 5,242,881 is refused. API_LAB.md states the boundary exactly, and C41 pins it from both sides.
 
 ---
 
 ## 6. What is not tested
 
-- The React client. The suite is server-side; the UI was verified by hand in the browser for each feature.
+- The React client. The suite is server-side, and `tsc -b` and eslint run on the client in CI. The UI was verified by hand in the browser for each feature, and once more end to end on a fresh clone (2026-10-21/22): `npm install` and `npm run dev` on a clean checkout, then every flow in the browser with tokens minted from one admin login so the login limiter never engaged:
+  - all ten seeded documents verify against the chain; both lab reports earn the *Verified Lab Report* badge; the critical report sorts above a newer, non-critical one;
+  - doctor self-registration, the unverified refusals (including publishing a slot), admin verification from the queue, and the *not verified* label in a patient's share list;
+  - consent request → bell notification → approve → the doctor reads, told "the patient approved your access request" → revoke → `403`, gone from the list;
+  - break-glass → the doctor is told it is emergency access and until when → the patient revokes → `403` → the doctor breaks glass again → *Re-opened after you revoked* in the patient's panel and its notification;
+  - lab link requested from the lab dashboard → approved in the patient's panel → report uploaded from the lab dashboard → the patient sees it verified, with the server-computed flag, and both notifications;
+  - unshare, metadata, delete, a Devanagari file name uploaded and previewed, an appointment published and booked (the doctor sees the patient's name);
+  - every anchor of the run (consent requested/approved/revoked; grant, revoke, re-grant) `ANCHORED`, and the admin verify view showing the recomputed, stored and on-chain digests equal.
+
+  One finding, fixed: the notification bell loaded once per page, so a patient with the dashboard open never saw a break-glass alert until a reload. It now refreshes every 30 s and when the tab returns to view; checked live (2 → 3 unread with no reload).
 - Timing side channels (e.g. whether the lookup 404 takes measurably longer for a non-patient email). Responses are compared for identical status and body only.
 - Rate-limit windows running out. The suite shows that each limit engages at the documented count; it does not wait 15 minutes or an hour to watch a window reset. That is express-rate-limit's own behaviour, not something this code implements.
 - Multi-process deployment. Three mechanisms are per process by design, and documented as such where they live: the in-memory rate-limit store, the chain send mutex (wallet nonce) and the per-doctor break-glass lock that enforces the grant cap. A clustered deployment would need a shared store, a nonce manager and database-enforced grant slots (see §5). The one-live-grant-per-document rule does not depend on the process count: the database enforces it, and C36 proves that with lock-free concurrent inserts.
@@ -281,25 +382,32 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 14 files, 946 tests | **53–104 s** — the same suite has measured anywhere in this range on the development machine depending on its load; 53–61 s on an idle machine |
-| Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
+| `npm test` — 21 files, 1,086 tests | **130–168 s** across eight full runs on 2026-10-21/22. Load matters: one run alongside a client lint took 287 s, and C30's 30 s test timeout was hit then; it passes alone in 25 s. (The 14-file, 946-test suite took 53–61 s on an idle machine.) |
+| Global setup (compile check, chain + mongod in parallel, deploy) | 7.5–13 s (21–40 s on a loaded or cold machine) |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
 
-Time spent running each file's tests (excluding its app import):
+Time spent running each file's tests (the sum of its test durations, excluding its app import), from the 130.5 s run:
 
 | File | Tests | Time |
 |---|---|---|
-| `access/documents.test.ts` (the 504-cell read matrix) | 547 | 15.7 s |
-| `anchoring/outage.test.ts` (kills and restarts its own chain) | 1 | 11.4 s |
-| `breakglass/breakglass.test.ts` (two 30-round races) | 17 | 11.2 s |
-| `anchoring/anchors.test.ts` | 20 | 11.0 s |
-| `encryption/vault.test.ts` | 30 | 9.8 s |
-| `hardening/limits.test.ts` | 18 | 5.1 s |
-| `access/workflows.test.ts` | 40 | 3.9 s |
-| `access/inventory.test.ts` | 215 | 3.1 s |
+| `seed/seed.test.ts` + `seed/seedFailures.test.ts` (run the real seed several times) | 9 | 30.5 s |
+| `access/documents.test.ts` (the 504-cell read matrix, now also checking per-reader shapes) | 548 | 14.4 s |
+| `anchoring/outage.test.ts` (kills and restarts its own chain) | 1 | 12.1 s |
+| `breakglass/breakglass.test.ts` (two 30-round races) | 17 | 12.1 s |
+| `anchoring/anchors.test.ts` | 20 | 10.4 s |
+| `encryption/vault.test.ts` | 30 | 9.2 s |
+| `hardening/limits.test.ts` | 18 | 7.7 s |
+| `access/inventory.test.ts` (49 routes; 282 gate cells) | 293 | 7.0 s |
+| `races/decisions.test.ts` (two 15-round races) | 10 | 5.9 s |
+| `access/documentManagement.test.ts` | 15 | 5.6 s |
+| `access/documentDeletion.test.ts` | 12 | 4.8 s |
+| `access/workflows.test.ts` | 40 | 3.8 s |
 | `hardening/trustProxyBoot.test.ts` | 1 | 2.9 s |
-| `hardening/uploads.test.ts` | 32 | 1.6 s |
-| `breakglass/grantInsert.test.ts` | 7 | 1.2 s |
-| `harness.test.ts` | 8 | 0.5 s |
-| `seed/seed.test.ts` + `seed/seedFailures.test.ts` (run the real seed several times) | 9 | ≈ 30 s |
+| `security/adversarial.test.ts` | 7 | 2.3 s |
+| `hardening/uploads.test.ts` | 32 | 2.0 s |
+| `access/responseShapes.test.ts` | 4 | 1.5 s |
+| `access/appointments.test.ts` | 8 | 1.3 s |
+| `breakglass/grantInsert.test.ts` | 7 | 1.3 s |
+| `harness.test.ts` | 8 | 0.6 s |
+| `access/notifications.test.ts` | 6 | 0.5 s |

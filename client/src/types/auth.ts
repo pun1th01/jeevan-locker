@@ -15,6 +15,12 @@ export interface User {
   createdAt: string;
 }
 
+/**
+ * Another user as a document's reader sees them: `id` and `name` always, anything more only where that reader needs it
+ * (docs/API_DOCUMENTS.md §6). Mirrors UserReference in server/src/controllers/document.controller.ts.
+ */
+export type UserReference = Pick<User, 'id' | 'name'> & Partial<Omit<User, 'id' | 'name'>>;
+
 export interface AuthResponse {
   user: User;
   token: string;

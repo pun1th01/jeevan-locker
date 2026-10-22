@@ -92,6 +92,7 @@ Notes:
 | `lab.link.requested` | the patient | the lab | `labLink.controller.ts` → `requestLabLink` | after `LAB_LINK_REQUESTED` audit, on the `201` path |
 | `lab.link.approved` | the lab | the patient | `labLink.controller.ts` → `transitionLabLink` (`ACTIVE` branch) | after `LAB_LINKED` audit. Rejection and revocation are **audit-only**, no event |
 | `lab.report.uploaded` | the patient | the lab | `labReport.controller.ts` → `uploadLabReport` | after `LAB_REPORT_UPLOADED` audit — i.e. after the file is on disk, the row exists and the hash is on-chain |
+| `consent.revoked`, `consent.rejected`, `emergency.revoked` | the doctor losing access | the patient | `documentDeletion.service.ts` → `deleteDocumentForPatient` | when a patient **deletes the document**: one per consent or live grant the deletion actually closed, after its audit row (metadata `cause: 'DOCUMENT_DELETED'`). Same payloads as above, with a message saying the document was deleted (API_DOCUMENTS.md §5) |
 
 Not emitted anywhere (by design): break-glass **expiry** (`EMERGENCY_ACCESS_EXPIRED` is audit-only — the grant simply ran its stated course, and the expiry time was already known to the patient from the grant notification), doctor verification, lab creation, patient lookups, integrity checks, document views/downloads, lab link rejection/revocation.
 

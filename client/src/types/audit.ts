@@ -26,6 +26,10 @@ export type AuditAction =
   | 'LAB_LINK_REJECTED'
   | 'LAB_UNLINKED'
   | 'LAB_REPORT_UPLOADED'
+  | 'APPOINTMENT_SLOT_PUBLISHED'
+  | 'APPOINTMENT_SLOT_CANCELLED'
+  | 'APPOINTMENT_BOOKED'
+  | 'APPOINTMENT_BOOKING_CANCELLED'
   | 'NOTIFICATION_SENT'
   | 'ADMIN_CREATED'
   | 'DOCTOR_VERIFIED'
@@ -37,6 +41,8 @@ export interface AuditDocumentSummary {
   title: string;
   originalFileName: string;
   createdAt: string;
+  /** Set when the owning patient soft-deleted the document. */
+  deletedAt?: string;
 }
 
 export interface AuditLogEntry {
@@ -51,6 +57,9 @@ export interface AuditLogEntry {
 
 export interface AuditSummary {
   totalUsers: number;
+  /** Documents not deleted by their patient. */
   totalDocuments: number;
+  /** Documents soft-deleted by their patient; still held, flagged, for admins. */
+  deletedDocuments: number;
   recentActivity: AuditLogEntry[];
 }

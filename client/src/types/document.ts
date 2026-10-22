@@ -1,4 +1,4 @@
-import type { User } from './auth';
+import type { UserReference } from './auth';
 
 export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
@@ -20,16 +20,20 @@ export interface TestValue {
   flag: TestValueFlag;
 }
 
-// Mirrors MedicalDocumentResponse in server/src/controllers/document.controller.ts — keep in sync.
+/**
+ * A document as its owning PATIENT (or an admin) receives it. Every referenced user is minimised per reader — see
+ * UserReference. Mirrors MedicalDocumentResponse in server/src/controllers/document.controller.ts — keep in sync.
+ */
 export interface MedicalDocument {
   id: string;
   title: string;
   description?: string;
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
-  /** The owning patient — also for lab reports. */
-  uploadedBy: User;
-  sharedWithDoctors: User[];
+  /** The owning patient — also for lab reports. A doctor also receives their email; a patient and a lab do not. */
+  uploadedBy: UserReference;
+  /** Only the owning patient (id, name, email) and admins receive this. */
+  sharedWithDoctors: UserReference[];
   documentHash?: string;
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
@@ -37,7 +41,8 @@ export interface MedicalDocument {
   /** False only for legacy files the encryption migration has not reached yet — show a lock badge when true. */
   encryptedAtRest: boolean;
   // --- Verified lab report fields: present only when uploadedByLab is set ---
-  uploadedByLab?: User;
+  /** The issuing lab: id, name and organisation. */
+  uploadedByLab?: UserReference;
   labName?: string;
   testName?: string;
   nablCertNumber?: string;
@@ -46,18 +51,22 @@ export interface MedicalDocument {
   /** ISO 8601 */
   reportDate?: string;
   testValues?: TestValue[];
+  /** Admins only: when the owning patient soft-deleted the document. Every other reader never receives a deleted one. */
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
- * A document as the server sends it to a LAB: the same shape without `sharedWithDoctors`. A lab never learns which
- * doctors a patient shared a document with, not even for a report it issued.
+ * A document as the server sends it to a DOCTOR or a LAB: the same shape without `sharedWithDoctors`. Neither learns
+ * which doctors a patient shared a document with — a lab not even for a report it issued.
  */
-export type LabMedicalDocument = Omit<MedicalDocument, 'sharedWithDoctors'>;
+export type SharedMedicalDocument = Omit<MedicalDocument, 'sharedWithDoctors'>;
+export type DoctorMedicalDocument = SharedMedicalDocument;
+export type LabMedicalDocument = SharedMedicalDocument;
 
 /** Anything the shared document components (DocumentList, DocumentPreviewModal) can render. */
-export type AnyMedicalDocument = MedicalDocument | LabMedicalDocument;
+export type AnyMedicalDocument = MedicalDocument | SharedMedicalDocument;
 
 export interface UploadDocumentInput {
   title: string;

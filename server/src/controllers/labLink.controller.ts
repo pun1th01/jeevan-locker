@@ -214,38 +214,46 @@ const transitionLabLink = (
       return;
     }
 
-    if (link.status !== requiredStatus) {
+    // One guarded write, as for consents: of two concurrent decisions on the same link exactly one matches
+    // `status: requiredStatus`, and only that one is audited and notified.
+    const result = await LabLink.updateOne(
+      { _id: link._id, patientId: link.patientId, status: requiredStatus },
+      { $set: { status: nextStatus, [LAB_LINK_TIMESTAMP_BY_STATUS[nextStatus]]: new Date() } }
+    );
+
+    if (result.modifiedCount !== 1) {
       res.status(409).json({ message: `Only ${requiredStatus.toLowerCase()} lab links can be ${successMessage.toLowerCase()}` });
       return;
     }
 
-    link.status = nextStatus;
-    if (nextStatus === 'ACTIVE') link.approvedAt = new Date();
-    if (nextStatus === 'REJECTED') link.rejectedAt = new Date();
-    if (nextStatus === 'REVOKED') link.revokedAt = new Date();
-    await link.save();
-
-    await auditLink(req as AuthenticatedRequest, patient.id, action, link);
+    const decided = (await LabLink.findById(link._id))!;
+    await auditLink(req as AuthenticatedRequest, patient.id, action, decided);
 
     // Only approval notifies the lab; rejection and revocation are audit-only in Phase 0.
     if (nextStatus === 'ACTIVE') {
       emitAppEvent('lab.link.approved', {
         ...eventBase({
-          recipientUserId: link.labId.toString(),
+          recipientUserId: decided.labId.toString(),
           actorUserId: patient.id,
           actorName: patient.name,
           documentId: null,
           message: `${patient.name} authorised your lab to upload reports`,
         }),
         documentId: null,
-        labLinkId: link._id.toString(),
+        labLinkId: decided._id.toString(),
         patientName: patient.name,
       });
     }
 
-    await populateLink(link);
-    res.json({ message: `Lab link ${successMessage.toLowerCase()}`, link: serializeLabLink(link) });
+    await populateLink(decided);
+    res.json({ message: `Lab link ${successMessage.toLowerCase()}`, link: serializeLabLink(decided) });
   });
+
+const LAB_LINK_TIMESTAMP_BY_STATUS = {
+  ACTIVE: 'approvedAt',
+  REJECTED: 'rejectedAt',
+  REVOKED: 'revokedAt',
+} as const;
 
 /** PATCH /api/lab-links/:id/approve (patient, owner): PENDING -> ACTIVE */
 export const approveLabLink = transitionLabLink('ACTIVE', 'PENDING', 'LAB_LINKED', 'Approved');

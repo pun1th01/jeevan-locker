@@ -1,7 +1,9 @@
 // Mirrors AnchorResponse / AnchorVerification in server/src/controllers/anchor.controller.ts — keep in sync.
 
 export type ChainAnchorStatus = 'PENDING' | 'ANCHORED' | 'FAILED';
-export type AnchorEvent = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'REVOKED' | 'GRANTED';
+export type AnchorEvent = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'REVOKED' | 'GRANTED' | 'DELETED';
+/** `document` anchors a patient's deletion of a document (docs/ANCHORING.md §2). */
+export type AnchorRecordType = 'consent' | 'emergency' | 'document';
 
 export interface ChainAnchorRow {
   id: string;
@@ -9,7 +11,7 @@ export interface ChainAnchorRow {
   key: string;
   /** keccak256 of `key` — what the contract is indexed by. */
   onChainKey: string;
-  recordType: 'consent' | 'emergency';
+  recordType: AnchorRecordType;
   recordId: string;
   event: AnchorEvent;
   status: ChainAnchorStatus;

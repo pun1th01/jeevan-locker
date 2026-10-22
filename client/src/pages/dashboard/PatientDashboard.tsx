@@ -6,16 +6,22 @@ import DocumentList from '../../components/documents/DocumentList';
 import DocumentPreviewModal from '../../components/documents/DocumentPreviewModal';
 import DocumentUploadModal from '../../components/documents/DocumentUploadModal';
 import EmergencyAccessPanel from '../../components/emergency/EmergencyAccessPanel';
+import PatientLabLinksPanel from '../../components/lab/PatientLabLinksPanel';
+import PatientAppointmentsPanel from '../../components/appointments/PatientAppointmentsPanel';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { getApiErrorMessage } from '../../lib/api';
 import { documentService } from '../../services/document.service';
 import { consentService } from '../../services/consent.service';
 import { emergencyAccessService } from '../../services/emergencyAccess.service';
-import type { User } from '../../types/auth';
+import type { User, UserReference } from '../../types/auth';
 import type { DocumentMetadataInput, MedicalDocument, UploadDocumentInput } from '../../types/document';
 import type { ConsentGrant } from '../../types/consent';
 import type { EmergencyAccess } from '../../types/emergencyAccess';
+
+// Server limits for PATCH /documents/:id/metadata (docs/API_DOCUMENTS.md).
+const TITLE_MAX_LENGTH = 120;
+const DESCRIPTION_MAX_LENGTH = 500;
 
 export default function PatientDashboard() {
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
@@ -261,7 +267,7 @@ export default function PatientDashboard() {
     }
   };
 
-  const handleUnshare = async (document: MedicalDocument, doctor: User) => {
+  const handleUnshare = async (document: MedicalDocument, doctor: UserReference) => {
     setUnsharingDoctorId(doctor.id);
     setManagementError(null);
 
@@ -303,9 +309,11 @@ export default function PatientDashboard() {
   };
 
   const renderShareActions = (document: MedicalDocument) => {
-    const availableDoctors = doctors.filter(
-      (doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id)
-    );
+    // Anyone can self-register as a doctor, so an account an admin has not verified is labelled as such and listed last:
+    // sharing stays the patient's decision (docs/API_ADMIN.md §3), but never an uninformed one.
+    const availableDoctors = doctors
+      .filter((doctor) => !document.sharedWithDoctors.some((sharedDoctor) => sharedDoctor.id === doctor.id))
+      .sort((a, b) => Number(b.verified) - Number(a.verified));
 
     if (doctors.length === 0) {
       return <span className="rounded-md bg-white/[0.04] px-2 py-1 text-xs text-slate-500">No doctors registered</span>;
@@ -335,7 +343,7 @@ export default function PatientDashboard() {
           <option value="">Select doctor</option>
           {availableDoctors.map((doctor) => (
             <option key={doctor.id} value={doctor.id}>
-              {doctor.name}
+              {doctor.verified ? doctor.name : `${doctor.name} (not verified)`}
             </option>
           ))}
         </select>
@@ -449,6 +457,10 @@ export default function PatientDashboard() {
           ) : <div className="mt-5 rounded-md border border-dashed border-white/15 bg-slate-950/60 p-5 text-sm text-slate-400">No pending document access requests.</div>}
         </div>
 
+        <PatientLabLinksPanel />
+
+        <PatientAppointmentsPanel />
+
         <EmergencyAccessPanel />
 
         <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
@@ -559,8 +571,12 @@ export default function PatientDashboard() {
                   onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, title: event.target.value }))}
                   className="mt-2"
                   required
-                  maxLength={120}
+                  maxLength={TITLE_MAX_LENGTH}
+                  readOnly={Boolean(metadataDocument?.uploadedByLab)}
                 />
+                {metadataDocument?.uploadedByLab ? (
+                  <span className="mt-1 block text-xs font-normal text-slate-500">A lab report keeps the title its lab issued.</span>
+                ) : null}
               </label>
               <label className="block text-sm font-medium text-slate-200">
                 Description <span className="font-normal text-slate-500">(optional)</span>
@@ -568,8 +584,11 @@ export default function PatientDashboard() {
                   value={metadataDraft.description ?? ''}
                   onChange={(event) => setMetadataDraft((currentDraft) => ({ ...currentDraft, description: event.target.value }))}
                   className="mt-2 min-h-28 w-full rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-300/20"
-                  maxLength={2000}
+                  maxLength={DESCRIPTION_MAX_LENGTH}
                 />
+                <span className="mt-1 block text-right text-xs font-normal text-slate-500">
+                  {(metadataDraft.description ?? '').length}/{DESCRIPTION_MAX_LENGTH}
+                </span>
               </label>
               {metadataError ? <p className="text-sm text-rose-200">{metadataError}</p> : null}
               <div className="flex justify-end gap-2">
@@ -592,9 +611,13 @@ export default function PatientDashboard() {
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-300/20 bg-slate-900 p-6 shadow-2xl">
             <Dialog.Title className="flex items-center gap-2 text-lg font-semibold text-white"><AlertTriangle className="h-5 w-5 text-rose-300" />Delete document?</Dialog.Title>
             <Dialog.Description className="mt-3 rounded-md border border-rose-300/25 bg-rose-300/10 p-3 text-sm leading-6 text-rose-100">
-              The cryptographic hash permanently remains recorded on the blockchain. This action only hides the document from standard vault lists.
+              Every doctor loses access now: direct shares, approved consents and live emergency access all end, and pending requests are closed.
+              It cannot be undone.
             </Dialog.Description>
-            <p className="mt-3 text-sm leading-6 text-slate-400">The original file and audit trail are retained for integrity and compliance records.</p>
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              The document&rsquo;s hash stays on the blockchain, the deletion itself is recorded there, and the encrypted file and audit trail are kept
+              for integrity and compliance. A lab keeps the reports it issued.
+            </p>
             {managementError ? <p className="mt-3 text-sm text-rose-200">{managementError}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <Dialog.Close asChild>

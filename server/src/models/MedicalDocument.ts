@@ -1,5 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import type { DocumentEncryption } from '../services/documentCrypto.service';
+import { anchorReferenceSchema, type AnchorReference } from './ConsentGrant';
 
 export type MedicalDocumentMimeType = 'application/pdf' | 'image/jpeg' | 'image/png';
 
@@ -25,6 +26,8 @@ export interface ITestValue {
 export interface IMedicalDocument extends Document {
   _id: Types.ObjectId;
   title: string;
+  /** The owning patient's own note on the record, set through PATCH /documents/:id/metadata. Never sent to a lab. */
+  description?: string;
   originalFileName: string;
   storedFileName: string;
   filePath: string;
@@ -55,11 +58,22 @@ export interface IMedicalDocument extends Document {
   hospitalName?: string;
   reportDate?: Date;
   testValues?: ITestValue[];
+  /**
+   * Soft delete by the owning patient (DELETE /documents/:id). The row, the encrypted file and the on-chain
+   * registration all stay; the document is hidden from the patient and every doctor, while admins see it flagged
+   * and the issuing lab keeps its own report. Set once, never cleared. See docs/API_DOCUMENTS.md §5.
+   */
+  deletedAt?: Date;
+  deletedBy?: Types.ObjectId;
+  /** On-chain proof of the deletion, written back by the anchor worker (docs/ANCHORING.md). */
+  anchors?: { deleted?: AnchorReference };
   createdAt: Date;
   updatedAt: Date;
 }
 
 const REPORT_TEXT_MAX_LENGTH = 120;
+export const DOCUMENT_TITLE_MAX_LENGTH = 120;
+export const DOCUMENT_DESCRIPTION_MAX_LENGTH = 500;
 
 const documentEncryptionSchema = new Schema<DocumentEncryption>(
   {
@@ -91,8 +105,9 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
       type: String,
       required: [true, 'Document title is required'],
       trim: true,
-      maxlength: 120,
+      maxlength: DOCUMENT_TITLE_MAX_LENGTH,
     },
+    description: { type: String, trim: true, maxlength: DOCUMENT_DESCRIPTION_MAX_LENGTH, default: undefined },
     originalFileName: {
       type: String,
       required: true,
@@ -161,6 +176,12 @@ const medicalDocumentSchema = new Schema<IMedicalDocument>(
     hospitalName: { type: String, trim: true, maxlength: REPORT_TEXT_MAX_LENGTH },
     reportDate: Date,
     testValues: { type: [testValueSchema], default: undefined },
+    deletedAt: { type: Date, default: undefined },
+    deletedBy: { type: Schema.Types.ObjectId, ref: 'User', default: undefined },
+    anchors: {
+      type: new Schema({ deleted: { type: anchorReferenceSchema, default: undefined } }, { _id: false }),
+      default: undefined,
+    },
   },
   {
     timestamps: true,

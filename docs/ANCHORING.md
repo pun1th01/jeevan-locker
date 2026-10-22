@@ -8,7 +8,7 @@ Related: [ENCRYPTION.md](ENCRYPTION.md) (documents at rest — the same "the cha
 
 ## 1. Summary
 
-Every time a consent request is **made, approved, rejected or revoked**, every time a doctor **grants themselves emergency access**, and every time a patient **revokes that emergency access**, the server builds a small, fixed-format text record of that event (the *preimage*), takes its SHA-256 digest, and writes the digest to a smart contract under a key derived from the record's id. The contract is write-once per key and timestamps each write with the block time.
+Every time a consent request is **made, approved, rejected or revoked**, every time a doctor **grants themselves emergency access**, every time a patient **revokes that emergency access**, and every time a patient **deletes a document** from their vault, the server builds a small, fixed-format text record of that event (the *preimage*), takes its SHA-256 digest, and writes the digest to a smart contract under a key derived from the record's id. The contract is write-once per key and timestamps each write with the block time.
 
 Three things follow:
 
@@ -48,9 +48,17 @@ The preimage is a JSON object serialized by `JSON.stringify` with **no whitespac
 
 Two fields you will **not** find in any emergency preimage: `status` (it changes on the next transition) and `afterRevocation`. The latter marks a grant that re-opened access a patient had just revoked; it is deliberately kept off-chain because adding it to the `GRANTED` preimage would change those bytes and invalidate every anchor made before it existed — and because it is *derivable* from what is already anchored: a `REVOKED` event for that doctor+document followed by a later `GRANTED` event for the same pair is exactly what the flag summarises.
 
+### Document deletion (`DELETED`)
+
+```
+{"v":1,"type":"document","event":"DELETED","documentId":<id>,"patientId":<id>,"documentHash":<hex|null>,"deletedBy":<id>,"deletedAt":<ISO>}
+```
+
+A patient soft-deleted the document (API_DOCUMENTS.md §5). `patientId` is the owner (`uploadedBy`), `deletedBy` the patient who deleted it (the same person today; kept separate so the record states it), and `documentHash` the document's own plaintext hash, which its `DocumentRegistry` entry keeps on-chain after the deletion. This is an **additional** record type, added after the first three. No existing preimage changed, so `v` stays `1` and every earlier anchor still verifies. The consents and emergency grants the deletion ends are anchored as their own `REVOKED`/`REJECTED` events, in the formats above.
+
 ### Keys
 
-Off-chain record key (a plain string): `consent:<consentId>:<EVENT>` or `emergency:<emergencyAccessId>:<EVENT>`.
+Off-chain record key (a plain string): `consent:<consentId>:<EVENT>`, `emergency:<emergencyAccessId>:<EVENT>` or `document:<documentId>:DELETED`.
 On-chain key: `keccak256(utf8(record key))` — 32 bytes, what the contract's mapping is indexed by.
 
 ### Why these fields and not others
@@ -104,7 +112,14 @@ If the patient then revokes that grant at `2026-09-21T22:07:05.220Z` (four minut
 ```
 digest `a667a8b1f962a04b0c6ce1ccada4d8262bee7f55b963cd6b3f1df4cdf7b9eec8`, record key `emergency:66f2a1b3c4d5e6f708192b77:REVOKED`, on-chain key `0x2c2cbf59063d57fb51f9a7f76eeff6964373bfe7c1c673dc879000e4f7e46808`. The grant and its revocation are two independent, write-once anchors: reading both tells you the session existed *and* that the patient ended it early, and neither can be altered afterwards.
 
-These values are produced by the server code and reproduced by the shell commands below. `npm run verify:anchors` (in `server/`) rebuilds all three from `anchorPreimage.service.ts` and fails if any byte, digest or key drifts from what is printed here — it needs no database and no chain, so run it after touching anything in that file.
+If the patient later deletes that document, at `2026-09-24T08:30:12.045Z`, the deletion anchors as:
+
+```
+{"v":1,"type":"document","event":"DELETED","documentId":"66f2a1b3c4d5e6f708192a10","patientId":"66f2a1b3c4d5e6f708192a01","documentHash":"4cbcc0d60e005ca14a7ccd6e705bac955644327663c196cadcf1954cd851fd9e","deletedBy":"66f2a1b3c4d5e6f708192a01","deletedAt":"2026-09-24T08:30:12.045Z"}
+```
+digest `9373f10a027db4a2896d5c4d35a0bf4df067dcc7f6988fdebd2e90544c4a4f19`, record key `document:66f2a1b3c4d5e6f708192a10:DELETED`, on-chain key `0xefa1fa3c8218c34d1215b8941163f5b3ce42fbccb55b40425e8ba2268f76a7c9`. The document's `DocumentRegistry` record (its hash, registered at upload) is untouched: the chain then says both that the file existed with that hash *and* that its owner deleted it, and when.
+
+These values are produced by the server code and reproduced by the shell commands below. `npm run verify:anchors` (in `server/`) rebuilds all four from `anchorPreimage.service.ts` and fails if any byte, digest or key drifts from what is printed here — it needs no database and no chain, so run it after touching anything in that file.
 
 ---
 
@@ -236,7 +251,7 @@ All admin-only (`verifyToken` + `requireRole('admin')`).
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/admin/anchors?status=&recordType=&limit=` | `{ anchors: ChainAnchorRow[], counts: { PENDING, ANCHORED, FAILED } }`, newest first (`limit` 1–200, default 50). `400` on a bad `status`/`recordType`/`limit`. |
+| GET | `/api/admin/anchors?status=&recordType=&limit=` | `{ anchors: ChainAnchorRow[], counts: { PENDING, ANCHORED, FAILED } }`, newest first (`limit` 1–200, default 50). `recordType` is `consent`, `emergency` or `document`. `400` on a bad `status`/`recordType`/`limit`. |
 | GET | `/api/admin/anchors/:id/verify` | `AnchorVerification` — the three digests, `matchesRecord`, `matchesChain`, `verified`, `differingFields`, `chainReachable`, `recordFound`, both preimages. `400` bad id, `404` unknown. |
 | POST | `/api/admin/anchors/:id/retry` | re-queues a `FAILED` (or stuck `PENDING`) row: `{ message: 'Anchor re-queued', anchor }`. `409 Only pending or failed anchors can be retried` for `ANCHORED`; `404` unknown. |
 

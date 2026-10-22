@@ -32,6 +32,9 @@ const storage = multer.diskStorage({
 
 export const uploadMedicalDocument = multer({
   storage,
+  // Browsers send multipart file names as raw UTF-8 (HTML spec). multer's default reads them as Latin-1, which stored
+  // "रिपोर्ट.pdf" as mojibake; the name a patient sees and downloads must be the one they uploaded.
+  defParamCharset: 'utf8',
   limits: {
     // busboy reports the limit the moment a file REACHES `fileSize` bytes — it cannot know whether more follow — so
     // the configured value is one byte above the largest file we accept.

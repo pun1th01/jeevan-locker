@@ -119,7 +119,8 @@ export const requestConsent: RequestHandler = asyncHandler(async (req, res) => {
 
   const [patient, document] = await Promise.all([
     User.findOne({ _id: patientId, role: 'patient' }),
-    MedicalDocument.findById(documentId),
+    // A document its patient deleted cannot be asked for: to a doctor it no longer exists.
+    MedicalDocument.findOne({ _id: documentId, deletedAt: null }),
   ]);
   if (!patient) {
     res.status(404).json({ message: 'Patient not found' });
@@ -236,36 +237,45 @@ const updateConsent = (
       res.status(403).json({ message: 'You do not have permission to change this consent request' });
       return;
     }
-    if (consent.status !== requiredStatus) {
+    // The transition is one guarded write: of two concurrent decisions (approve + reject, or the same one twice)
+    // exactly one matches `status: requiredStatus`, and only that one goes on to audit, anchor and notify.
+    const result = await ConsentGrant.updateOne(
+      { _id: consent._id, patientId: consent.patientId, status: requiredStatus },
+      { $set: { status, [CONSENT_TIMESTAMP_BY_STATUS[status]]: new Date() } }
+    );
+    if (result.modifiedCount !== 1) {
       res.status(409).json({ message: `Only ${requiredStatus.toLowerCase()} consent requests can be ${status.toLowerCase()}` });
       return;
     }
 
-    consent.status = status;
-    if (status === 'APPROVED') consent.approvedAt = new Date();
-    if (status === 'REJECTED') consent.rejectedAt = new Date();
-    if (status === 'REVOKED') consent.revokedAt = new Date();
-    await consent.save();
-    await auditConsent(req as AuthenticatedRequest, action, consent, patient.id);
+    // Re-read, not populated: the audit row and the anchor preimage need the stored record with bare ObjectIds.
+    const decided = (await ConsentGrant.findById(consent._id))!;
+    await auditConsent(req as AuthenticatedRequest, action, decided, patient.id);
 
-    const document = await MedicalDocument.findById(consent.documentId).select('title documentHash');
-    await enqueueConsentAnchor(consent, status, document?.documentHash ?? null);
+    const document = await MedicalDocument.findById(decided.documentId).select('title documentHash');
+    await enqueueConsentAnchor(decided, status, document?.documentHash ?? null);
     const documentTitle = document?.title ?? 'a document';
     emitAppEvent(CONSENT_EVENT_BY_STATUS[status], {
       ...eventBase({
-        recipientUserId: consent.doctorId.toString(),
+        recipientUserId: decided.doctorId.toString(),
         actorUserId: patient.id,
         actorName: patient.name,
-        documentId: consent.documentId.toString(),
+        documentId: decided.documentId.toString(),
         message: CONSENT_MESSAGE_BY_STATUS[status](patient.name, documentTitle),
       }),
-      documentId: consent.documentId.toString(),
-      consentId: consent._id.toString(),
+      documentId: decided.documentId.toString(),
+      consentId: decided._id.toString(),
       documentTitle,
     });
 
-    res.json({ message: `Consent ${status.toLowerCase()}`, consent: await respondWithConsent(consent._id) });
+    res.json({ message: `Consent ${status.toLowerCase()}`, consent: await respondWithConsent(decided._id) });
   });
+
+const CONSENT_TIMESTAMP_BY_STATUS = {
+  APPROVED: 'approvedAt',
+  REJECTED: 'rejectedAt',
+  REVOKED: 'revokedAt',
+} as const;
 
 const CONSENT_EVENT_BY_STATUS = {
   APPROVED: 'consent.approved',

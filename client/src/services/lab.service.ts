@@ -22,9 +22,28 @@ export const labService = {
     return data.link;
   },
 
+  /** Lab: every link it requested, any status. Patient: their PENDING and ACTIVE links only. */
   async getLinks(): Promise<LabLink[]> {
     const { data } = await api.get<LabLinksResponse>('/lab-links');
     return data.links;
+  },
+
+  /** Patient: PENDING -> ACTIVE. The lab may upload reports from now on. */
+  async approveLink(linkId: string): Promise<LabLink> {
+    const { data } = await api.patch<LabLinkResponse>(`/lab-links/${linkId}/approve`);
+    return data.link;
+  },
+
+  /** Patient: PENDING -> REJECTED. */
+  async rejectLink(linkId: string): Promise<LabLink> {
+    const { data } = await api.patch<LabLinkResponse>(`/lab-links/${linkId}/reject`);
+    return data.link;
+  },
+
+  /** Patient: ACTIVE -> REVOKED. Stops future uploads; reports the lab already issued stay readable by it. */
+  async revokeLink(linkId: string): Promise<LabLink> {
+    const { data } = await api.delete<LabLinkResponse>(`/lab-links/${linkId}`);
+    return data.link;
   },
 
   /** Every report this lab issued. The server omits `sharedWithDoctors` for labs, hence the lab-specific type. */

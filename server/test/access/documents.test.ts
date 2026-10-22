@@ -87,8 +87,41 @@ const ACCESS: Record<ActorName, Partial<Record<DocName, AccessMethod>>> = {
   unknownRole: {},
 };
 
-/** Labs never receive `sharedWithDoctors` (who else the patient shared a document with); every other reader does. */
 const isLab = (actor: ActorName) => actor === 'labIssuer' || actor === 'labRevoked' || actor === 'labOther';
+
+type Viewer = 'patient' | 'doctor' | 'lab' | 'admin';
+const viewerOf = (actor: ActorName): Viewer =>
+  actor === 'admin' ? 'admin' : actor.startsWith('patient') ? 'patient' : isLab(actor) ? 'lab' : 'doctor';
+
+const ACCOUNT_RECORD = ['createdAt', 'email', 'id', 'name', 'role', 'verified'];
+
+/**
+ * Response minimisation (C59), from API_DOCUMENTS.md §6: the exact fields of each user a document references, per
+ * reader. `sharedDoctors: null` means the reader does not receive `sharedWithDoctors` at all: only the owning patient
+ * (who manages it) and admins do. An admin sees whole account records; the test fixtures give doctors no organisation.
+ */
+const REFERENCE_SHAPE: Record<Viewer, { owner: string[]; sharedDoctors: string[] | null; issuingLab: string[] }> = {
+  patient: { owner: ['id', 'name'], sharedDoctors: ['email', 'id', 'name'], issuingLab: ['id', 'name', 'organisation'] },
+  doctor: { owner: ['email', 'id', 'name'], sharedDoctors: null, issuingLab: ['id', 'name', 'organisation'] },
+  lab: { owner: ['id', 'name'], sharedDoctors: null, issuingLab: ['id', 'name', 'organisation'] },
+  admin: { owner: ACCOUNT_RECORD, sharedDoctors: ACCOUNT_RECORD, issuingLab: [...ACCOUNT_RECORD, 'organisation'].sort() },
+};
+
+const keysOf = (value: unknown) => Object.keys(value as Record<string, unknown>).sort();
+
+const expectReferenceShape = (document: Record<string, unknown>, actor: ActorName, context: string) => {
+  const shape = REFERENCE_SHAPE[viewerOf(actor)];
+  expect(keysOf(document.uploadedBy), `${context} uploadedBy`).toEqual(shape.owner);
+
+  if (shape.sharedDoctors === null) {
+    expect(document, context).not.toHaveProperty('sharedWithDoctors');
+  } else {
+    expect(document, context).toHaveProperty('sharedWithDoctors');
+    for (const doctor of document.sharedWithDoctors as unknown[]) expect(keysOf(doctor), `${context} sharedWithDoctors[]`).toEqual(shape.sharedDoctors);
+  }
+
+  if (document.uploadedByLab !== undefined) expect(keysOf(document.uploadedByLab), `${context} uploadedByLab`).toEqual(shape.issuingLab);
+};
 
 const READABLE = {} as Record<ActorName, readonly DocName[]>;
 for (const actor of Object.keys(ACCESS) as ActorName[]) {
@@ -221,8 +254,7 @@ describe('read matrix: every actor x every document x every read endpoint', () =
       expect(response.status, context).toBe(200);
       if (endpoint.suffix === '') {
         expect(response.body.document.id, context).toBe(docIds[doc]);
-        if (isLab(actor)) expect(response.body.document, context).not.toHaveProperty('sharedWithDoctors');
-        else expect(response.body.document, context).toHaveProperty('sharedWithDoctors');
+        expectReferenceShape(response.body.document, actor, context);
       }
       if (endpoint.suffix === '/integrity') expect(response.body, context).not.toHaveProperty('sharedWithDoctors');
       if (endpoint.suffix === '/view') expect(response.headers['content-disposition'], context).toMatch(/^inline/);
@@ -273,8 +305,7 @@ describe('list mirrors decision: my-documents holds exactly what the actor may o
     const listed = (response.body.documents as { id: string }[]).map((document) => document.id).filter((id) => worldIds.has(id));
 
     for (const document of response.body.documents as Record<string, unknown>[]) {
-      if (isLab(actor)) expect(document, `${actor} list`).not.toHaveProperty('sharedWithDoctors');
-      else expect(document, `${actor} list`).toHaveProperty('sharedWithDoctors');
+      expectReferenceShape(document, actor, `${actor} list`);
     }
     expect(listed.sort()).toEqual(READABLE[actor].map((doc) => docIds[doc]).sort());
   });

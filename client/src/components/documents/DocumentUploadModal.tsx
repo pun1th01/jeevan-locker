@@ -13,7 +13,6 @@ import {
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -92,7 +91,13 @@ export default function DocumentUploadModal({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  useEffect(() => {
+  // Closing the dialog clears the form. Done during render on the open -> closed transition, as React recommends for
+  // "adjusting state when a prop changes", instead of in an effect that would first render the stale form.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+
+  if (wasOpen !== isOpen) {
+    setWasOpen(isOpen);
+
     if (!isOpen) {
       setTitle('');
       setFile(null);
@@ -101,7 +106,7 @@ export default function DocumentUploadModal({
       setUploadProgress(0);
       setIsSuccess(false);
     }
-  }, [isOpen]);
+  }
 
   const isReady = useMemo(() => Boolean(title.trim() && file && !validation.file), [file, title, validation.file]);
 

@@ -4,6 +4,8 @@ import path from 'path';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { Types } from 'mongoose';
 import {
+  DOCUMENT_DESCRIPTION_MAX_LENGTH,
+  DOCUMENT_TITLE_MAX_LENGTH,
   MedicalDocument,
   type IMedicalDocument,
   type ITestValue,
@@ -25,6 +27,7 @@ import { getRegisteredDocumentHash } from '../services/documentRegistry.service'
 import { DocumentIngestError, discardUploadedFile, ingestUploadedDocument } from '../services/documentIngest.service';
 import { hashPlaintextFile, openDecryptedStream, verifyEncryptedFile, VaultFileError } from '../services/documentCrypto.service';
 import { emitAppEvent, eventBase } from '../events/appEvents';
+import { deleteDocumentForPatient } from '../services/documentDeletion.service';
 
 /** Projection for every populated user reference in document responses. Must cover everything SafeUser needs. */
 export const USER_REFERENCE_FIELDS = 'name email role verified organisation createdAt';
@@ -53,18 +56,22 @@ type DocumentWithUsers = Omit<IMedicalDocument, 'uploadedBy' | 'sharedWithDoctor
 export interface MedicalDocumentResponse {
   id: string;
   title: string;
+  /** The owning patient's note. Present only when set, and never sent to a lab — see receivesPatientNotes. */
+  description?: string;
   originalFileName: string;
   mimeType: MedicalDocumentMimeType;
-  uploadedBy: SafeUser;
-  /** Which doctors the patient shared the document with. Never sent to a lab — see receivesSharing. */
-  sharedWithDoctors?: SafeUser[];
+  /** The owning patient, minimised per reader (REFERENCE_FIELDS). */
+  uploadedBy: UserReference;
+  /** Which doctors the patient shared the document with. Only the patient and admins receive it — see receivesSharing. */
+  sharedWithDoctors?: UserReference[];
   documentHash?: string;
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
   /** False only for legacy rows the encryption migration has not reached yet. */
   encryptedAtRest: boolean;
-  uploadedByLab?: SafeUser;
+  /** The issuing lab, minimised per reader (REFERENCE_FIELDS). */
+  uploadedByLab?: UserReference;
   labName?: string;
   testName?: string;
   nablCertNumber?: string;
@@ -72,6 +79,8 @@ export interface MedicalDocumentResponse {
   hospitalName?: string;
   reportDate?: string;
   testValues?: ITestValue[];
+  /** Admins only: when the owning patient soft-deleted the document. */
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -109,11 +118,62 @@ const serializeUserReference = (user: Types.ObjectId | PopulatedUserReference): 
 };
 
 /**
- * Whether a reader receives `sharedWithDoctors` — the doctors a patient chose to share a document with, with their
- * names and emails. A lab issues reports but takes no part in the patient's care decisions, so it never learns who
- * else can read a document, not even one it issued. Exhaustive over the roles: a new role must decide explicitly.
+ * Whether a reader receives `sharedWithDoctors` — the doctors a patient chose to share a document with. It is the
+ * patient's own decision about their care team, so it goes to the patient (who manages it) and to admins. A doctor
+ * reads the document, not the list of colleagues who also may; a lab issues reports but takes no part in care
+ * decisions. Exhaustive over the roles: a new role must decide explicitly.
  */
 const receivesSharing = (viewer: UserRole): boolean => {
+  switch (viewer) {
+    case 'patient':
+    case 'admin':
+      return true;
+    case 'doctor':
+    case 'lab':
+      return false;
+    default: {
+      const unhandled: never = viewer;
+      return Boolean(unhandled);
+    }
+  }
+};
+
+/** A user as one reader of a document sees them: `id` and `name` always, and only what that reader needs beyond. */
+export type UserReference = Pick<SafeUser, 'id' | 'name'> & Partial<Omit<SafeUser, 'id' | 'name'>>;
+
+/** Which part a referenced user plays in the document. */
+type ReferenceRole = 'owner' | 'sharedDoctor' | 'issuingLab';
+
+/**
+ * Response minimisation (docs/API_DOCUMENTS.md §6): the fields of each referenced user that each reader receives.
+ * An admin gets the full account record. Nobody else ever gets `verified`, `createdAt` or `role` of another user, and an
+ * email only where the reader acts on it: a doctor contacting the patient, a patient managing whom they shared with.
+ * `sharedDoctor` applies only to readers that receive the share list at all (receivesSharing).
+ */
+const REFERENCE_FIELDS: Record<Exclude<UserRole, 'admin'>, Record<ReferenceRole, ReadonlyArray<keyof SafeUser>>> = {
+  patient: { owner: ['id', 'name'], sharedDoctor: ['id', 'name', 'email'], issuingLab: ['id', 'name', 'organisation'] },
+  doctor: { owner: ['id', 'name', 'email'], sharedDoctor: [], issuingLab: ['id', 'name', 'organisation'] },
+  lab: { owner: ['id', 'name'], sharedDoctor: [], issuingLab: ['id', 'name', 'organisation'] },
+};
+
+const referenceFor = (user: Types.ObjectId | PopulatedUserReference, part: ReferenceRole, viewer: UserRole): UserReference => {
+  const full = serializeUserReference(user);
+
+  if (viewer === 'admin') {
+    return full;
+  }
+
+  return Object.fromEntries(
+    REFERENCE_FIELDS[viewer][part].filter((field) => full[field] !== undefined).map((field) => [field, full[field]])
+  ) as UserReference;
+};
+
+/**
+ * Whether a reader receives the patient's own `description` of a document. It is the patient's note, written for
+ * their care; a lab that issued a report gets the report back as issued, never what the patient wrote about it.
+ * Exhaustive over the roles, like receivesSharing.
+ */
+const receivesPatientNotes = (viewer: UserRole): boolean => {
   switch (viewer) {
     case 'patient':
     case 'doctor':
@@ -135,16 +195,21 @@ export const serializeMedicalDocument = (document: IMedicalDocument, viewer: Use
   return {
     id: document._id.toString(),
     title: document.title,
+    ...(document.description && receivesPatientNotes(viewer) ? { description: document.description } : {}),
     originalFileName: document.originalFileName,
     mimeType: document.mimeType,
-    uploadedBy: serializeUserReference(documentWithUsers.uploadedBy),
-    ...(receivesSharing(viewer) ? { sharedWithDoctors: documentWithUsers.sharedWithDoctors.map(serializeUserReference) } : {}),
+    uploadedBy: referenceFor(documentWithUsers.uploadedBy, 'owner', viewer),
+    ...(receivesSharing(viewer)
+      ? { sharedWithDoctors: documentWithUsers.sharedWithDoctors.map((doctor) => referenceFor(doctor, 'sharedDoctor', viewer)) }
+      : {}),
     documentHash: document.documentHash,
     hashAlgorithm: document.hashAlgorithm,
     blockchainTxHash: document.blockchainTxHash,
     blockchainRegisteredAt: document.blockchainRegisteredAt?.toISOString(),
     encryptedAtRest: Boolean(document.encryption),
-    ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers) : {}),
+    ...(isLabReport(documentWithUsers) ? serializeLabReportFields(documentWithUsers, viewer) : {}),
+    // The flag is for admins only: the issuing lab, which also still reads a deleted report, is not told.
+    ...(document.deletedAt && viewer === 'admin' ? { deletedAt: document.deletedAt.toISOString() } : {}),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
   };
@@ -156,12 +221,13 @@ const isLabReport = (document: DocumentWithUsers): document is LabReportDocument
 
 /** Report fields are emitted only when a lab issued the document; bounds are omitted when unset. */
 const serializeLabReportFields = (
-  document: LabReportDocument
+  document: LabReportDocument,
+  viewer: UserRole
 ): Pick<
   MedicalDocumentResponse,
   'uploadedByLab' | 'labName' | 'testName' | 'nablCertNumber' | 'authorizingDoctorName' | 'hospitalName' | 'reportDate' | 'testValues'
 > => ({
-  uploadedByLab: serializeUserReference(document.uploadedByLab),
+  uploadedByLab: referenceFor(document.uploadedByLab, 'issuingLab', viewer),
   labName: document.labName,
   testName: document.testName,
   nablCertNumber: document.nablCertNumber,
@@ -226,6 +292,12 @@ const getDocumentAccessDecision = async (
   user: SafeUser,
   document: IMedicalDocument
 ): Promise<DocumentAccessDecision> => {
+  // A soft-deleted document reaches only the readers seesDeletedDocuments names; the lookup already returns 404 to
+  // everyone else, and this keeps the rule true for any caller that loads the document some other way.
+  if (document.deletedAt && !seesDeletedDocuments(user.role)) {
+    return { allowed: false };
+  }
+
   switch (user.role) {
     case 'admin':
       return { allowed: true, method: 'admin' };
@@ -301,12 +373,33 @@ const getDocumentAccessAuditMetadata = (
 };
 
 
-const getDocumentByValidatedId = async (documentId: string) => {
+/**
+ * Whether a soft-deleted document still exists for this reader. For the patient who deleted it and for every doctor
+ * it is gone: 404, exactly like an id that never existed. An admin sees it, flagged. The issuing lab keeps its own
+ * report, for the reason it keeps one after a link is revoked: a lab must be able to stand behind what it signed.
+ * Exhaustive over the roles.
+ */
+const seesDeletedDocuments = (viewer: UserRole): boolean => {
+  switch (viewer) {
+    case 'admin':
+    case 'lab':
+      return true;
+    case 'patient':
+    case 'doctor':
+      return false;
+    default: {
+      const unhandled: never = viewer;
+      return Boolean(unhandled);
+    }
+  }
+};
+
+const getDocumentByValidatedId = async (documentId: string, viewer: UserRole) => {
   if (!Types.ObjectId.isValid(documentId)) {
     return null;
   }
 
-  return MedicalDocument.findById(documentId);
+  return MedicalDocument.findOne({ _id: documentId, ...(seesDeletedDocuments(viewer) ? {} : { deletedAt: null }) });
 };
 
 const getStringParam = (value: string | string[] | undefined): string => {
@@ -317,7 +410,19 @@ const getStringParam = (value: string | string[] | undefined): string => {
   return value ?? '';
 };
 
-const getSafeDownloadFileName = (fileName: string): string => path.basename(fileName).replace(/["\\]/g, '');
+/**
+ * Content-Disposition per RFC 6266: an ASCII `filename` fallback (anything outside printable ASCII, and quotes and
+ * backslashes, become "_") plus `filename*` carrying the exact name as percent-encoded UTF-8. Node writes header
+ * values as Latin-1, so a raw non-Latin name (a Devanagari "रिपोर्ट.pdf") would be cut into control bytes and the
+ * whole response rejected by the browser.
+ */
+export const contentDispositionFor = (disposition: 'inline' | 'attachment', fileName: string): string => {
+  // The last segment after either separator, on every platform (path.basename splits on "\" only on Windows).
+  const name = fileName.split(/[\\/]/).pop() ?? '';
+  const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+};
 
 const resolveDocumentFilePath = (document: IMedicalDocument): string | null => {
   if (path.basename(document.storedFileName) !== document.storedFileName) {
@@ -347,7 +452,7 @@ const streamDocumentFile = async (
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -398,11 +503,9 @@ const streamDocumentFile = async (
     }
   }
 
-  const safeFileName = getSafeDownloadFileName(document.originalFileName || document.storedFileName);
-
   res.setHeader('Content-Type', document.mimeType);
   res.setHeader('Content-Length', contentLength.toString());
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeFileName}"`);
+  res.setHeader('Content-Disposition', contentDispositionFor(disposition, document.originalFileName || document.storedFileName));
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   await createAuditLog({
@@ -505,6 +608,13 @@ export const uploadDocument: RequestHandler = asyncHandler(async (req, res) => {
     return;
   }
 
+  // Checked here, like the lab-report and metadata routes, rather than left to the model: a refusal names the rule.
+  if (title.length > DOCUMENT_TITLE_MAX_LENGTH) {
+    await discardUploadedFile(file.path);
+    res.status(400).json({ message: TITLE_LENGTH_MESSAGE });
+    return;
+  }
+
   let document: IMedicalDocument;
 
   try {
@@ -540,7 +650,7 @@ const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unkn
       return {};
 
     case 'patient':
-      return { uploadedBy: user.id };
+      return { uploadedBy: user.id, deletedAt: null };
 
     case 'lab':
       return { uploadedByLab: user.id };
@@ -554,6 +664,7 @@ const getMyDocumentsFilter = async (user: SafeUser): Promise<Record<string, unkn
       ]);
 
       return {
+        deletedAt: null,
         $or: [
           { sharedWithDoctors: user.id },
           { _id: { $in: approvedConsents.map((consent) => consent.documentId) } },
@@ -601,7 +712,7 @@ export const getDocument: RequestHandler = asyncHandler(async (req, res) => {
   }
 
   const documentId = getStringParam(req.params.id);
-  const document = await getDocumentByValidatedId(documentId);
+  const document = await getDocumentByValidatedId(documentId, user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -643,7 +754,7 @@ export const verifyDocumentIntegrity: RequestHandler = asyncHandler(async (req, 
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
     return;
@@ -728,7 +839,7 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
     return;
   }
 
-  const document = await getDocumentByValidatedId(getStringParam(req.params.id));
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
 
   if (!document) {
     res.status(404).json({ message: 'Document not found' });
@@ -779,5 +890,200 @@ export const shareDocumentWithDoctor: RequestHandler = asyncHandler(async (req, 
   res.json({
     message: alreadyShared ? 'Doctor already has access to this document' : 'Document shared with doctor',
     document: serializeMedicalDocument(populatedDocument, user.role),
+  });
+});
+
+/** The document as stored after a write, populated and serialized for the caller — every write responds through it. */
+const respondWithDocument = async (res: Response, documentId: Types.ObjectId, viewer: UserRole, message: string) => {
+  const stored = await MedicalDocument.findById(documentId);
+  if (!stored) throw new Error(`Document ${documentId.toString()} disappeared before its response was built`);
+  res.json({ message, document: serializeMedicalDocument(await populateDocumentUsers(stored), viewer) });
+};
+
+/**
+ * PATCH /documents/:id/unshare { doctorId }   (patient, owner)
+ * Removes one doctor from the DIRECT share list and nothing else: an approved consent or a live break-glass grant the
+ * same doctor holds is a separate permission with its own revoke, and survives. One guarded $pull, so concurrent
+ * unshares audit once. Unsharing a doctor with no direct share is a 200 that writes nothing, mirroring a repeated share.
+ */
+export const unshareDocumentFromDoctor: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const doctorId = typeof req.body?.doctorId === 'string' ? req.body.doctorId : '';
+
+  if (!Types.ObjectId.isValid(doctorId)) {
+    res.status(400).json({ message: 'A valid doctor ID is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can change who this document is shared with' });
+    return;
+  }
+
+  const result = await MedicalDocument.updateOne(
+    { _id: document._id, uploadedBy: document.uploadedBy, sharedWithDoctors: doctorId },
+    { $pull: { sharedWithDoctors: new Types.ObjectId(doctorId) } }
+  );
+  const removed = result.modifiedCount === 1;
+
+  if (removed) {
+    await createAuditLog({
+      userId: user.id,
+      action: 'DOCUMENT_UNSHARED',
+      targetDocument: document._id,
+      ipAddress: getRequestIpAddress(req),
+      metadata: { doctorId, patientId: user.id },
+    });
+  }
+
+  await respondWithDocument(res, document._id, user.role, removed ? 'Direct access removed' : 'This doctor had no direct access to this document');
+});
+
+const EDITABLE_METADATA_FIELDS: ReadonlySet<string> = new Set(['title', 'description']);
+const TITLE_LENGTH_MESSAGE = `Document title must be 1 to ${DOCUMENT_TITLE_MAX_LENGTH} characters`;
+const DESCRIPTION_LENGTH_MESSAGE = `Description must be ${DOCUMENT_DESCRIPTION_MAX_LENGTH} characters or fewer`;
+
+/**
+ * PATCH /documents/:id/metadata { title?, description? }   (patient, owner)
+ * The only fields a patient may change, and the body may carry nothing else: ownership, sharing, the file, its hash
+ * and every lab-issued field are refused outright rather than silently ignored. A lab report keeps the title its lab
+ * issued; the patient may only describe it. An empty description clears it. The file and its on-chain hash are not
+ * touched, so /integrity verifies exactly as before. Saving unchanged values is a 200 that audits nothing.
+ */
+export const updateDocumentMetadata: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  if (Object.keys(body).some((field) => !EDITABLE_METADATA_FIELDS.has(field))) {
+    res.status(400).json({ message: 'Only the title and description of a document can be changed' });
+    return;
+  }
+
+  if (body.title === undefined && body.description === undefined) {
+    res.status(400).json({ message: 'Send a title or a description to change' });
+    return;
+  }
+
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined;
+
+  if (body.title !== undefined && (!title || title.length > DOCUMENT_TITLE_MAX_LENGTH)) {
+    res.status(400).json({ message: TITLE_LENGTH_MESSAGE });
+    return;
+  }
+
+  const description = typeof body.description === 'string' ? body.description.trim() : undefined;
+
+  if (body.description !== undefined && (description === undefined || description.length > DOCUMENT_DESCRIPTION_MAX_LENGTH)) {
+    res.status(400).json({ message: DESCRIPTION_LENGTH_MESSAGE });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can edit this document' });
+    return;
+  }
+
+  const titleChanged = title !== undefined && title !== document.title;
+
+  if (titleChanged && document.uploadedByLab) {
+    res.status(403).json({ message: 'A lab report keeps the title its lab issued; only its description can be changed' });
+    return;
+  }
+
+  const descriptionChanged = description !== undefined && description !== (document.description ?? '');
+
+  if (!titleChanged && !descriptionChanged) {
+    await respondWithDocument(res, document._id, user.role, 'No changes to save');
+    return;
+  }
+
+  const update: { $set?: Record<string, string>; $unset?: Record<string, ''> } = {};
+  if (titleChanged) update.$set = { title };
+  if (descriptionChanged && description) update.$set = { ...update.$set, description };
+  if (descriptionChanged && !description) update.$unset = { description: '' };
+
+  await MedicalDocument.updateOne({ _id: document._id, uploadedBy: document.uploadedBy }, update, { runValidators: true });
+
+  await createAuditLog({
+    userId: user.id,
+    action: 'DOCUMENT_UPDATED',
+    targetDocument: document._id,
+    ipAddress: getRequestIpAddress(req),
+    metadata: {
+      fields: [titleChanged ? 'title' : null, descriptionChanged ? 'description' : null].filter(Boolean).join(','),
+      ...(titleChanged ? { previousTitle: document.title } : {}),
+      patientId: user.id,
+    },
+  });
+
+  await respondWithDocument(res, document._id, user.role, 'Document details updated');
+});
+
+export const DOCUMENT_DELETED_MESSAGE =
+  'Document deleted. Doctors can no longer open it; its hash stays on the blockchain and the audit trail is kept.';
+
+/**
+ * DELETE /documents/:id   (patient, owner)
+ * Soft delete: see services/documentDeletion.service.ts for the cascade and docs/API_DOCUMENTS.md §5. A document the
+ * patient already deleted is not found — it no longer exists for them — and so is the loser of two concurrent deletes.
+ */
+export const deleteDocument: RequestHandler = asyncHandler(async (req, res) => {
+  const user = validateAuthenticatedUser(req as AuthenticatedRequest);
+
+  if (!user) {
+    res.status(401).json({ message: 'Authentication is required' });
+    return;
+  }
+
+  const document = await getDocumentByValidatedId(getStringParam(req.params.id), user.role);
+
+  if (!document) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  if (document.uploadedBy.toString() !== user.id) {
+    res.status(403).json({ message: 'Only the uploading patient can delete this document' });
+    return;
+  }
+
+  const deletion = await deleteDocumentForPatient(document._id, user, getRequestIpAddress(req));
+
+  if (!deletion) {
+    res.status(404).json({ message: 'Document not found' });
+    return;
+  }
+
+  res.json({
+    message: DOCUMENT_DELETED_MESSAGE,
+    consentsRevoked: deletion.consentsRevoked,
+    consentsRejected: deletion.consentsRejected,
+    grantsRevoked: deletion.grantsRevoked,
   });
 });

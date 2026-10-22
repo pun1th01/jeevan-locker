@@ -19,8 +19,13 @@ export type ConsentAnchorEvent = (typeof CONSENT_ANCHOR_EVENTS)[number];
 export const EMERGENCY_ANCHOR_EVENTS = ['GRANTED', 'REVOKED'] as const;
 export type EmergencyAnchorEvent = (typeof EMERGENCY_ANCHOR_EVENTS)[number];
 
-export type AnchorRecordType = 'consent' | 'emergency';
-export type AnchorEvent = ConsentAnchorEvent | EmergencyAnchorEvent;
+/** A patient soft-deleting a document from their vault. The document's own registration stays on-chain. */
+export const DOCUMENT_ANCHOR_EVENTS = ['DELETED'] as const;
+export type DocumentAnchorEvent = (typeof DOCUMENT_ANCHOR_EVENTS)[number];
+
+export const ANCHOR_RECORD_TYPES = ['consent', 'emergency', 'document'] as const;
+export type AnchorRecordType = (typeof ANCHOR_RECORD_TYPES)[number];
+export type AnchorEvent = ConsentAnchorEvent | EmergencyAnchorEvent | DocumentAnchorEvent;
 
 export interface IChainAnchor extends Document {
   _id: Types.ObjectId;
@@ -54,9 +59,9 @@ export interface IChainAnchor extends Document {
 const chainAnchorSchema = new Schema<IChainAnchor>(
   {
     key: { type: String, required: true, unique: true, trim: true },
-    recordType: { type: String, enum: ['consent', 'emergency'], required: true, index: true },
+    recordType: { type: String, enum: ANCHOR_RECORD_TYPES, required: true, index: true },
     recordId: { type: Schema.Types.ObjectId, required: true, index: true },
-    event: { type: String, enum: [...CONSENT_ANCHOR_EVENTS, ...EMERGENCY_ANCHOR_EVENTS], required: true },
+    event: { type: String, enum: [...CONSENT_ANCHOR_EVENTS, ...EMERGENCY_ANCHOR_EVENTS, ...DOCUMENT_ANCHOR_EVENTS], required: true },
     actorUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     documentId: { type: Schema.Types.ObjectId, ref: 'MedicalDocument', required: true },
     preimage: { type: String, required: true },

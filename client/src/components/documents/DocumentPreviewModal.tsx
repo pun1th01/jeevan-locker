@@ -30,26 +30,31 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
   const [integrityResult, setIntegrityResult] = useState<IntegrityVerificationResult | null>(null);
   const [integrityError, setIntegrityError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isOpen || !document) {
-      setPreviewUrl(null);
-      setError(null);
-      setDownloadError(null);
-      setIntegrityResult(null);
-      setIntegrityError(null);
-      return;
-    }
+  // Which document the state below belongs to. When it changes (opened, closed, or switched while open) the state is
+  // reset during render, as React recommends for "adjusting state when a prop changes", rather than in an effect,
+  // which would render once with the previous document's preview first.
+  const previewKey = isOpen && document ? document.id : null;
+  const [stateKey, setStateKey] = useState<string | null>(null);
 
-    const controller = new AbortController();
-    setIsLoading(true);
+  if (stateKey !== previewKey) {
+    setStateKey(previewKey);
+    setIsLoading(previewKey !== null);
     setPreviewUrl(null);
     setError(null);
     setDownloadError(null);
     setIntegrityResult(null);
     setIntegrityError(null);
+  }
+
+  useEffect(() => {
+    if (!previewKey) {
+      return;
+    }
+
+    const controller = new AbortController();
 
     documentService
-      .getDocumentPreviewBlob(document.id, controller.signal)
+      .getDocumentPreviewBlob(previewKey, controller.signal)
       .then((blob) => {
         if (!controller.signal.aborted) {
           setPreviewUrl(URL.createObjectURL(blob));
@@ -67,7 +72,7 @@ export default function DocumentPreviewModal({ document, isOpen, onClose }: Docu
       });
 
     return () => controller.abort();
-  }, [document, isOpen]);
+  }, [previewKey]);
 
   useEffect(() => {
     return () => {

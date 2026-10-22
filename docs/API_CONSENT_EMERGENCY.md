@@ -165,9 +165,11 @@ Role: **patient**, and only the patient the consent names. No body.
 | 403 | `You do not have permission to change this consent request` | the caller is not the consent's patient |
 | 409 | `Only pending consent requests can be approved` | `/approve` on a non-`PENDING` consent |
 | 409 | `Only pending consent requests can be rejected` | `/reject` on a non-`PENDING` consent |
-| 409 | `Only approved consent requests can be revoked` | `/revoke` on a non-`APPROVED` consent |
+| 409 | `Only approved consent requests can be revoked` | `/revoke` on a non-`APPROVED` consent — including the loser of two concurrent decisions |
 
-Effects on `200`: audit `CONSENT_APPROVED` / `CONSENT_REJECTED` / `CONSENT_REVOKED` (actor the patient); anchor `APPROVED` / `REJECTED` / `REVOKED` enqueued; event `consent.approved` / `consent.rejected` / `consent.revoked` to the doctor. A revocation takes effect on the doctor's next request.
+Effects on `200`: audit `CONSENT_APPROVED` / `CONSENT_REJECTED` / `CONSENT_REVOKED` (actor the patient); anchor `APPROVED` / `REJECTED` / `REVOKED` enqueued; event `consent.approved` / `consent.rejected` / `consent.revoked` to the doctor. A revocation takes effect on the doctor's next request. A `409` writes nothing.
+
+**Concurrent decisions.** The transition is a single guarded write (`updateOne({ _id, patientId, status: <required> })`, success only when it modified one row). Of two decisions that arrive together — approve and reject from two tabs, a double-click — exactly one wins; the other gets the `409` above, and the audit row, anchor and event are written once. The database also allows at most one live (`PENDING` or `APPROVED`) consent per doctor per document (`one_live_consent_per_doctor_document`). TESTING.md C51–C53.
 
 ---
 

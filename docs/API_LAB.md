@@ -158,6 +158,10 @@ Role: **patient** (owner). `ACTIVE → REVOKED`, sets `revokedAt`. See the revok
 
 Response `200`: `{ message: 'Lab link revoked', link: LabLink }`. Errors as above with `409 Only active lab links can be revoked`. Audit: `LAB_UNLINKED`.
 
+**Patient UI.** The patient dashboard's *Diagnostic labs* panel (`client/src/components/lab/PatientLabLinksPanel.tsx`) lists `PENDING` requests with Approve and Reject, and `ACTIVE` links with Revoke. Each row shows the lab's organisation and the request date. Revoke asks for confirmation and says that issued reports stay readable by the lab. The list is reloaded from the server after every action and every 30 s.
+
+**Concurrent decisions.** Approve, reject and revoke are each one guarded write (`updateOne({ _id, patientId, status: <required> })`, success only when it modified one row). Two decisions arriving together — approve and reject from two tabs, a double-click — produce exactly one `200`; the others get the `409` above and write nothing, so there is one audit row and at most one `lab.link.approved` event. The database allows at most one open (`PENDING` or `ACTIVE`) link per lab and patient (`one_live_link_per_lab_patient`). TESTING.md C52–C53.
+
 ### `POST /api/lab/reports` — upload a verified report
 
 Role: **lab**. Requires an `ACTIVE` link with the target patient. Content type: `multipart/form-data`.
@@ -298,16 +302,18 @@ Lab-report fields are flat and optional; **`uploadedByLab` being present is what
 interface MedicalDocument {
   id: string;
   title: string;
+  description?: string;             // the patient's own note — NEVER sent to a lab (API_DOCUMENTS.md §4)
   originalFileName: string;
   mimeType: 'application/pdf' | 'image/jpeg' | 'image/png';
-  uploadedBy: User;                 // the owning PATIENT — also for lab reports
-  sharedWithDoctors: User[];
+  uploadedBy: { id: string; name: string };  // the owning PATIENT — to a lab, never their email (API_DOCUMENTS.md §6)
+  sharedWithDoctors?: User[];       // NEVER sent to a lab (nor to a doctor); the owning patient and admins receive it
   documentHash?: string;            // SHA-256 hex
   hashAlgorithm?: 'SHA-256';
   blockchainTxHash?: string;
   blockchainRegisteredAt?: string;
+  encryptedAtRest: boolean;         // false only for legacy rows the encryption migration has not reached
   // --- present only when a lab issued the document ---
-  uploadedByLab?: User;             // role 'lab', with organisation
+  uploadedByLab?: { id: string; name: string; organisation?: string };  // the issuing lab (admins: full record)
   labName?: string;
   testName?: string;
   nablCertNumber?: string;
@@ -322,7 +328,7 @@ interface MedicalDocument {
 
 ### Routes a lab is **denied** (all `403 You do not have permission to access this resource`)
 
-`POST /documents/upload` (patient), `PATCH /documents/:id/share` (patient), `GET /documents/doctors` (patient/admin), `GET /patients/lookup` (doctor — labs use `POST /lab-links`), `POST /consents/request` and every consent route, `POST /emergency-access`, `GET /audit/summary` (admin), everything under `/admin` (admin).
+`POST /documents/upload` (patient), `PATCH /documents/:id/share`, `/unshare` and `/metadata` (patient — a lab cannot rename or describe even a report it issued), `GET /documents/doctors` (patient/admin), `GET /patients/lookup` (doctor — labs use `POST /lab-links`), `POST /consents/request` and every consent route, `POST /emergency-access`, `GET /audit/summary` (admin), everything under `/admin` (admin).
 
 ---
 

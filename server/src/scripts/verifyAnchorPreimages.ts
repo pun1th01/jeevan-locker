@@ -2,9 +2,11 @@ import { Types } from 'mongoose';
 import { keccak256, toUtf8Bytes } from 'ethers';
 import {
   buildConsentPreimage,
+  buildDocumentDeletedPreimage,
   buildEmergencyGrantedPreimage,
   buildEmergencyRevokedPreimage,
   consentRecordKey,
+  documentRecordKey,
   emergencyRecordKey,
   sha256Hex,
 } from '../services/anchorPreimage.service';
@@ -66,6 +68,14 @@ const grant = {
   revokedBy: PATIENT,
 };
 
+const deletedDocument = {
+  _id: DOCUMENT,
+  uploadedBy: PATIENT,
+  documentHash: DOCUMENT_HASH,
+  deletedBy: PATIENT,
+  deletedAt: new Date('2026-09-24T08:30:12.045Z'),
+};
+
 const expectations: Expectation[] = [
   {
     label: 'consent APPROVED',
@@ -93,6 +103,15 @@ const expectations: Expectation[] = [
     expectedDigest: 'a667a8b1f962a04b0c6ce1ccada4d8262bee7f55b963cd6b3f1df4cdf7b9eec8',
     recordKey: emergencyRecordKey(EMERGENCY_ID.toString(), 'REVOKED'),
     expectedChainKey: '0x2c2cbf59063d57fb51f9a7f76eeff6964373bfe7c1c673dc879000e4f7e46808',
+  },
+  {
+    label: 'document DELETED',
+    preimage: buildDocumentDeletedPreimage(deletedDocument),
+    expectedPreimage:
+      '{"v":1,"type":"document","event":"DELETED","documentId":"66f2a1b3c4d5e6f708192a10","patientId":"66f2a1b3c4d5e6f708192a01","documentHash":"4cbcc0d60e005ca14a7ccd6e705bac955644327663c196cadcf1954cd851fd9e","deletedBy":"66f2a1b3c4d5e6f708192a01","deletedAt":"2026-09-24T08:30:12.045Z"}',
+    expectedDigest: '9373f10a027db4a2896d5c4d35a0bf4df067dcc7f6988fdebd2e90544c4a4f19',
+    recordKey: documentRecordKey(DOCUMENT.toString(), 'DELETED'),
+    expectedChainKey: '0xefa1fa3c8218c34d1215b8941163f5b3ce42fbccb55b40425e8ba2268f76a7c9',
   },
 ];
 
