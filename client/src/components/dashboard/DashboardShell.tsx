@@ -5,6 +5,8 @@ import { useAuthStore } from '../../store/useAuthStore';
 import type { Notification } from '../../types/notification';
 import { Button } from '../ui/button';
 
+const NOTIFICATION_REFRESH_MS = 30_000;
+
 interface DashboardMetric {
   label: string;
   value: string;
@@ -31,18 +33,30 @@ export default function DashboardShell({ title, subtitle, metrics, children }: D
     }
 
     let isCurrent = true;
-    void notificationService
-      .getNotifications()
-      .then(({ notifications: loadedNotifications, unreadCount: loadedUnreadCount }) => {
-        if (isCurrent) {
-          setNotifications(loadedNotifications);
-          setUnreadCount(loadedUnreadCount);
-        }
-      })
-      .catch(() => undefined);
+    const load = () =>
+      void notificationService
+        .getNotifications()
+        .then(({ notifications: loadedNotifications, unreadCount: loadedUnreadCount }) => {
+          if (isCurrent) {
+            setNotifications(loadedNotifications);
+            setUnreadCount(loadedUnreadCount);
+          }
+        })
+        .catch(() => undefined);
+
+    // Fetched once, the bell went stale: a patient with the page open never saw a break-glass alert. It now refreshes
+    // on a timer and whenever the tab comes back into view.
+    load();
+    const intervalId = window.setInterval(load, NOTIFICATION_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
     return () => {
       isCurrent = false;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [user]);
 
