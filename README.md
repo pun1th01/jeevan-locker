@@ -157,7 +157,7 @@ See [API_DOCUMENTS.md](docs/API_DOCUMENTS.md) for the document-management rules.
 
 See [API_APPOINTMENTS.md](docs/API_APPOINTMENTS.md).
 
-### Lab (`/api/lab-links`, `/api/lab-reports`)
+### Lab (`/api/lab-links`, `/api/lab/reports`)
 See [API_LAB.md](docs/API_LAB.md) for endpoints.
 
 ### Admin (`/api/admin`)
@@ -266,14 +266,14 @@ In `server/src/config/db.ts`, if `NODE_ENV` is `development` AND the `MONGO_URI`
 
 ## 20. Testing
 
-JeevanLocker features a robust automated test suite (934 tests) utilizing Vitest, Supertest, and Hardhat. The test suite automatically provisions its own in-memory MongoDB and Hardhat network, ignoring your `.env`.
+JeevanLocker has an automated suite of 1,086 tests in 21 files, using Vitest, Supertest and a real Hardhat chain. It starts its own in-memory MongoDB and Hardhat node and ignores your `.env`. A full run takes about two to three minutes.
 
 To run the test suite:
 ```bash
-cd server
-npm test
+npm test           # from the repository root (or: cd server && npm test)
+npm run check      # strict type checks, the anchor-preimage check, client tsc and eslint
 ```
-The suite fully covers access control, break-glass workflow, encryption at rest, file validation, route guards, and blockchain anchoring logic. See [TESTING.md](docs/TESTING.md) for details.
+The suite covers access control on every route for every role, encryption at rest, on-chain anchoring, break-glass, upload hardening and rate limits, the demo seed, concurrent decisions, and a final adversarial pass. Every claim it makes, and the evidence that each test can fail, is in [TESTING.md](docs/TESTING.md). The same checks run in CI on every pull request (`.github/workflows/ci.yml`).
 
 ## 21. Build
 
@@ -293,9 +293,14 @@ npm run build
 
 - [Lab API Documentation](docs/API_LAB.md)
 - [Admin API Documentation](docs/API_ADMIN.md)
+- [Consent and Emergency Access API](docs/API_CONSENT_EMERGENCY.md)
+- [Document Management API](docs/API_DOCUMENTS.md)
+- [Appointments API](docs/API_APPOINTMENTS.md)
+- [On-chain Anchoring](docs/ANCHORING.md)
+- [Encryption at Rest](docs/ENCRYPTION.md)
 - [System Events Documentation](docs/EVENTS.md)
 - [Testing Architecture](docs/TESTING.md)
 
 ## 23. Project Status
 
-The Phase II implementation is feature-complete for demonstration purposes. The local blockchain integration, encryption at rest, lab workflows, and the 934-test automated suite are fully operational.
+The Phase II implementation is feature-complete for demonstration purposes. The local blockchain integration, encryption at rest, consent and break-glass workflows, lab workflows, document management, appointments and the 1,086-test automated suite are fully operational. A fresh clone starts with `npm install` and `npm run dev`, and every flow has been run end to end on one.

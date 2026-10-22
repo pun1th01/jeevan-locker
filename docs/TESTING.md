@@ -81,17 +81,17 @@ These are not claims about JeevanLocker; they are what makes every other result 
 
 ## 3. Claims and the tests that back them
 
-Six suites: access control, encryption, anchoring, break-glass, hardening and the demo seed. Every claim is one sentence about the system; the proof column says what the test actually does.
+Eight suites: access control, encryption, anchoring, break-glass, hardening, the demo seed, concurrent decisions and the final security pass. Every claim is one sentence about the system; the proof column says what the test actually does.
 
 **How expected results are written.** Each suite's expectations are a specification written by hand in the test, taken from the API documents and the documented intent of each rule. They are never computed by calling the server's own decision code: a test that asked the implementation what the answer should be would prove nothing. Where the documents name an exact status and message, the test pins them. Where they only say "refused", the test pins the implementation's status as a regression guard, and the claim is the refusal plus the absence of any side effect.
 
-### 3.1 Access control — suite 1 (`test/access/`, 803 tests)
+### 3.1 Access control — suite 1 (`test/access/`, 926 tests)
 
 | ID | Claim | Proof | Test |
 |---|---|---|---|
 | C1 | Every HTTP endpoint has an explicit, reviewed access rule; an endpoint added without one fails the suite. | Reads the router stack of every routes file mounted on the app (Express keeps each route's path and methods) and requires an exact match with the hand-written access table. It fails on a route without a row, a row without a route, a routes file without a mount prefix, a router mounted that did not come from a routes file, and nested routers the scan cannot see. | `inventory.test.ts` → *route inventory* |
-| C2 | Every endpoint except health, register and login refuses a request that carries no token. | Each of the 32 protected routes, called anonymously: `401 Authentication token is required`. | `inventory.test.ts` → *gate grid* |
-| C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 35 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the three gated routes gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
+| C2 | Every endpoint except health, register and login refuses a request that carries no token. | Each of the 46 protected routes, called anonymously: `401 Authentication token is required`. | `inventory.test.ts` → *gate grid* |
+| C3 | Each role reaches exactly the endpoints its role permits; every other endpoint answers 403. | 49 routes × {anonymous, patient, doctor, unverified doctor, admin, lab}. A refused role gets 403 with the role message. An unverified doctor on the four gated routes (lookup, consent request, break-glass, publishing an appointment slot) gets 403 with the *verification* message, so the two refusals cannot be confused. An allowed role gets past both gates: not 401, 403 or 5xx, and not a route-level 404, which would mean the table's path is wrong. | `inventory.test.ts` → *gate grid* |
 | C4 | Identity and role are read from the database on every request. The role inside a token is ignored, and forged, expired, malformed, wrong-secret and deleted-user tokens are all refused. | A patient's token re-signed to claim `admin` still gets 403 on admin routes; an admin's token claiming `patient` still gets 200; a lab's token claiming `doctor` still cannot look up or break glass. Wrong secret, expired, unknown user, missing `userId`, non-JWT and non-Bearer headers each get 401 with their documented message. A valid token stops working the moment its user is deleted. | `inventory.test.ts` → *tokens* |
 | C5 | A document is readable by its owner, by an admin, and by a doctor holding a share, an approved consent or a live break-glass grant — and by nobody else. | A world of 7 documents (patient uploads, lab reports, a second patient's records) and 18 actors covering every relationship. Every actor tries every document on each of the 4 read endpoints (`/:id`, `/view`, `/download`, `/integrity`): 504 cells. An allowed cell must return 200 with the right content: the right id, an `inline` or `attachment` disposition, `verified: true` from the chain. A refused cell must return exactly `403 {message}` and nothing else. Unknown and malformed ids give every role `404 Document not found`. | `documents.test.ts` → *read matrix* |
 | C6 | A lab reads only the reports it issued, and never learns which doctors a patient shared them with. It never reads a linked patient's own uploads or another lab's reports, and it keeps its own reports after the patient revokes the link. | The lab rows of the matrix: a linked lab is refused the patient's uploads; a lab whose link was revoked after issuing still reads that report. Every lab response — `GET /:id`, `my-documents` — carries no `sharedWithDoctors` (since C59, neither does a doctor's; the patient and admins still receive it). A report the patient shared with two doctors leaks neither doctor's id nor email to its lab on `/:id`, `/view`, `/download`, `/integrity`, `my-documents` or the upload response itself; the patient still sees both. | `documents.test.ts` → *read matrix*, *list mirrors decision*, *a lab never learns…* |
@@ -350,8 +350,8 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
   1. **Fixed: a document with a non-Latin file name could not be opened or downloaded.** multer read multipart file names as Latin-1, so `रिपोर्ट.pdf` was stored as mojibake. Node writes header values as Latin-1, so the raw name was cut into control bytes in `Content-Disposition` and the response was rejected. Names are now read as UTF-8. The header follows RFC 6266: an ASCII `filename` fallback plus the exact name in `filename*`. C62.
   2. **Fixed: client errors carried stack traces outside production.** Malformed or oversized JSON (and any other 4xx reaching the generic handler) answered with the parser's message and a full stack, server paths included. These are now plain messages; a stack appears only on a 500, and only outside production. C62.
   3. **Fixed: an over-long upload title was refused with validator internals** (`ValidatorError`, the quoted input), in an `errors` shape the client renders as `[object Object]`. The title is now checked by name, like the lab-report and metadata routes, and model validation errors map to one plain sentence per field. C62.
-  4. **Fixed (UI): the doctor dashboard said access was "granted by the patient" even under break-glass.** It now states the real route: emergency access until a given time, an approved request, or a direct share. Found by reading in the 2026-10-03 diagnosis; checked in the browser in the end-to-end run.
-  5. **Fixed (UI): the patient's share list did not distinguish self-registered doctor accounts no admin had verified.** Sharing stays the patient's decision, per the documented verification policy (API_ADMIN.md §3), so the server is unchanged. The list now marks such accounts *not verified* and puts them last. Checked in the browser in the end-to-end run.
+  4. **Fixed (UI): the doctor dashboard said access was "granted by the patient" even under break-glass.** It now states the real route: emergency access until a given time, an approved request, or a direct share. Found by reading in the 2026-10-03 diagnosis; checked in the browser in the end-to-end run (§6): each of the three routes is worded correctly.
+  5. **Fixed (UI): the patient's share list did not distinguish self-registered doctor accounts no admin had verified.** Sharing stays the patient's decision, per the documented verification policy (API_ADMIN.md §3), so the server is unchanged. The list now marks such accounts *not verified* and puts them last. Checked in the browser in the end-to-end run (§6).
 
   Accepted, unchanged: registration answers `409` for an email already in use (rate-limited, 5 per hour per address); repeated query keys (`?status=A&status=B`) fall back to the default filter; tokens live in browser storage (the "beyond a demo" list in the remaining-work plan).
 - **Fixed: a file of exactly 5 MB was refused.** The upload dialog accepts a file of exactly 5 MB (it rejects only `size > 5 MB`), but multer's limit, as busboy applies it, rejects a file that *reaches* the configured size. The server now configures `5 MB + 1` bytes, so exactly 5,242,880 bytes is accepted and 5,242,881 is refused. API_LAB.md states the boundary exactly, and C41 pins it from both sides.
@@ -360,7 +360,16 @@ What the suites turned up beyond pass/fail. None is an access or integrity hole.
 
 ## 6. What is not tested
 
-- The React client. The suite is server-side; the UI was verified by hand in the browser for each feature.
+- The React client. The suite is server-side, and `tsc -b` and eslint run on the client in CI. The UI was verified by hand in the browser for each feature, and once more end to end on a fresh clone (2026-10-21/22): `npm install` and `npm run dev` on a clean checkout, then every flow in the browser with tokens minted from one admin login so the login limiter never engaged:
+  - all ten seeded documents verify against the chain; both lab reports earn the *Verified Lab Report* badge; the critical report sorts above a newer, non-critical one;
+  - doctor self-registration, the unverified refusals (including publishing a slot), admin verification from the queue, and the *not verified* label in a patient's share list;
+  - consent request → bell notification → approve → the doctor reads, told "the patient approved your access request" → revoke → `403`, gone from the list;
+  - break-glass → the doctor is told it is emergency access and until when → the patient revokes → `403` → the doctor breaks glass again → *Re-opened after you revoked* in the patient's panel and its notification;
+  - lab link requested from the lab dashboard → approved in the patient's panel → report uploaded from the lab dashboard → the patient sees it verified, with the server-computed flag, and both notifications;
+  - unshare, metadata, delete, a Devanagari file name uploaded and previewed, an appointment published and booked (the doctor sees the patient's name);
+  - every anchor of the run (consent requested/approved/revoked; grant, revoke, re-grant) `ANCHORED`, and the admin verify view showing the recomputed, stored and on-chain digests equal.
+
+  One finding, fixed: the notification bell loaded once per page, so a patient with the dashboard open never saw a break-glass alert until a reload. It now refreshes every 30 s and when the tab returns to view; checked live (2 → 3 unread with no reload).
 - Timing side channels (e.g. whether the lookup 404 takes measurably longer for a non-patient email). Responses are compared for identical status and body only.
 - Rate-limit windows running out. The suite shows that each limit engages at the documented count; it does not wait 15 minutes or an hour to watch a window reset. That is express-rate-limit's own behaviour, not something this code implements.
 - Multi-process deployment. Three mechanisms are per process by design, and documented as such where they live: the in-memory rate-limit store, the chain send mutex (wallet nonce) and the per-doctor break-glass lock that enforces the grant cap. A clustered deployment would need a shared store, a nonce manager and database-enforced grant slots (see §5). The one-live-grant-per-document rule does not depend on the process count: the database enforces it, and C36 proves that with lock-free concurrent inserts.
@@ -373,25 +382,32 @@ Measured on the development machine (4 cores, 14 GB, repository on OneDrive), wa
 
 | Step | Time |
 |---|---|
-| `npm test` — 14 files, 946 tests | **53–104 s** — the same suite has measured anywhere in this range on the development machine depending on its load; 53–61 s on an idle machine |
-| Global setup (compile check, chain + mongod in parallel, deploy) | 4.7–8.1 s |
+| `npm test` — 21 files, 1,086 tests | **130–168 s** across eight full runs on 2026-10-21/22. Load matters: one run alongside a client lint took 287 s, and C30's 30 s test timeout was hit then; it passes alone in 25 s. (The 14-file, 946-test suite took 53–61 s on an idle machine.) |
+| Global setup (compile check, chain + mongod in parallel, deploy) | 7.5–13 s (21–40 s on a loaded or cold machine) |
 | Importing the app into one worker (paid once per file) | ≈3.5 s (≈14 s on a cold machine) |
 | First run after a reboot | add ≈30–40 s (the Hardhat node took 27 s and mongod 10 s to start cold) |
 
-Time spent running each file's tests (excluding its app import):
+Time spent running each file's tests (the sum of its test durations, excluding its app import), from the 130.5 s run:
 
 | File | Tests | Time |
 |---|---|---|
-| `access/documents.test.ts` (the 504-cell read matrix) | 547 | 15.7 s |
-| `anchoring/outage.test.ts` (kills and restarts its own chain) | 1 | 11.4 s |
-| `breakglass/breakglass.test.ts` (two 30-round races) | 17 | 11.2 s |
-| `anchoring/anchors.test.ts` | 20 | 11.0 s |
-| `encryption/vault.test.ts` | 30 | 9.8 s |
-| `hardening/limits.test.ts` | 18 | 5.1 s |
-| `access/workflows.test.ts` | 40 | 3.9 s |
-| `access/inventory.test.ts` | 215 | 3.1 s |
+| `seed/seed.test.ts` + `seed/seedFailures.test.ts` (run the real seed several times) | 9 | 30.5 s |
+| `access/documents.test.ts` (the 504-cell read matrix, now also checking per-reader shapes) | 548 | 14.4 s |
+| `anchoring/outage.test.ts` (kills and restarts its own chain) | 1 | 12.1 s |
+| `breakglass/breakglass.test.ts` (two 30-round races) | 17 | 12.1 s |
+| `anchoring/anchors.test.ts` | 20 | 10.4 s |
+| `encryption/vault.test.ts` | 30 | 9.2 s |
+| `hardening/limits.test.ts` | 18 | 7.7 s |
+| `access/inventory.test.ts` (49 routes; 282 gate cells) | 293 | 7.0 s |
+| `races/decisions.test.ts` (two 15-round races) | 10 | 5.9 s |
+| `access/documentManagement.test.ts` | 15 | 5.6 s |
+| `access/documentDeletion.test.ts` | 12 | 4.8 s |
+| `access/workflows.test.ts` | 40 | 3.8 s |
 | `hardening/trustProxyBoot.test.ts` | 1 | 2.9 s |
-| `hardening/uploads.test.ts` | 32 | 1.6 s |
-| `breakglass/grantInsert.test.ts` | 7 | 1.2 s |
-| `harness.test.ts` | 8 | 0.5 s |
-| `seed/seed.test.ts` + `seed/seedFailures.test.ts` (run the real seed several times) | 9 | ≈ 30 s |
+| `security/adversarial.test.ts` | 7 | 2.3 s |
+| `hardening/uploads.test.ts` | 32 | 2.0 s |
+| `access/responseShapes.test.ts` | 4 | 1.5 s |
+| `access/appointments.test.ts` | 8 | 1.3 s |
+| `breakglass/grantInsert.test.ts` | 7 | 1.3 s |
+| `harness.test.ts` | 8 | 0.6 s |
+| `access/notifications.test.ts` | 6 | 0.5 s |
