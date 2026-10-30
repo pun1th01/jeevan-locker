@@ -11,6 +11,16 @@ interface LoginForm {
   password: string;
 }
 
+// The demo seed's development-only accounts (server/src/utils/seedDemoUsers.ts); the lab's password is not the same pattern.
+const DEMO_PASSWORDS = {
+  admin: 'Admin123!',
+  doctor: 'Doctor123!',
+  patient: 'Patient123!',
+  lab: 'Lab123!!',
+} as const;
+
+type DemoRole = keyof typeof DEMO_PASSWORDS;
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -42,9 +52,9 @@ export default function LoginPage() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleDemoLogin = (role: 'admin' | 'doctor' | 'patient') => {
+  const handleDemoLogin = (role: DemoRole) => {
     const email = `${role}@jeevanlocker.dev`;
-    const password = `${role.charAt(0).toUpperCase() + role.slice(1)}123!`;
+    const password = DEMO_PASSWORDS[role];
     setForm({ email, password });
     
     // Slight delay to allow state to update before submit
@@ -155,7 +165,7 @@ export default function LoginPage() {
                 DEMO MODE
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Button
                 type="button"
                 variant="outline"
@@ -182,6 +192,15 @@ export default function LoginPage() {
                 disabled={isLoading}
               >
                 Patient
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto border-emerald-400/20 bg-emerald-400/5 py-2 text-xs text-emerald-200 hover:bg-emerald-400/20 hover:text-emerald-50"
+                onClick={() => handleDemoLogin('lab')}
+                disabled={isLoading}
+              >
+                Lab
               </Button>
             </div>
           </div>
