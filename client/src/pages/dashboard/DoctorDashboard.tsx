@@ -1,4 +1,4 @@
-import { BadgeAlert, Calendar, CheckCircle2, ClipboardCheck, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
+import { BadgeAlert, Calendar, CheckCircle2, ChevronDown, ClipboardCheck, FileSearch, Mail, Siren, Stethoscope, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
 import DashboardShell from '../../components/dashboard/DashboardShell';
@@ -37,6 +37,7 @@ export default function DoctorDashboard() {
   const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
   const [isRequestingConsent, setIsRequestingConsent] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
+  const [expandedPatientIds, setExpandedPatientIds] = useState<Set<string>>(() => new Set());
 
   const formatDate = (value: string) =>
     new Intl.DateTimeFormat('en-IN', {
@@ -103,10 +104,26 @@ export default function DoctorDashboard() {
     return 'The patient shared this document with you.';
   };
 
-  const patientCount = useMemo(
-    () => new Set(documents.map((document) => document.uploadedBy.id)).size,
-    [documents]
-  );
+  /** Shared documents grouped by the patient who owns them, patients in name order. */
+  const patientGroups = useMemo(() => {
+    const groups = new Map<string, { patient: DoctorMedicalDocument['uploadedBy']; documents: DoctorMedicalDocument[] }>();
+    for (const document of documents) {
+      const group = groups.get(document.uploadedBy.id);
+      if (group) group.documents.push(document);
+      else groups.set(document.uploadedBy.id, { patient: document.uploadedBy, documents: [document] });
+    }
+    return [...groups.values()].sort((a, b) => a.patient.name.localeCompare(b.patient.name));
+  }, [documents]);
+
+  const patientCount = patientGroups.length;
+
+  const togglePatient = (patientId: string) =>
+    setExpandedPatientIds((current) => {
+      const next = new Set(current);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return next;
+    });
 
   const metrics = useMemo(
     () => [
@@ -155,6 +172,7 @@ export default function DoctorDashboard() {
             : [document, ...currentDocuments];
         });
         setSelectedDocument(document);
+        setExpandedPatientIds((current) => new Set(current).add(document.uploadedBy.id));
       } catch (error) {
         setPageError(`Emergency access was granted, but the document could not be opened: ${getApiErrorMessage(error)}`);
       }
@@ -270,16 +288,59 @@ export default function DoctorDashboard() {
           </div>
         ) : null}
 
-        <DocumentList
-          documents={documents}
-          isLoading={isLoading}
-          emptyTitle="No shared records"
-          emptyMessage="Patient-shared medical documents will appear here after access is granted."
-          selectedDocumentId={selectedDocument?.id ?? null}
-          openingDocumentId={openingDocumentId}
-          onOpenDocument={(documentId) => void handleOpenDocument(documentId)}
-          onPreviewDocument={setPreviewDocument}
-        />
+        {isLoading || patientGroups.length === 0 ? (
+          <DocumentList
+            documents={documents}
+            isLoading={isLoading}
+            emptyTitle="No shared records"
+            emptyMessage="Patient-shared medical documents will appear here after access is granted."
+          />
+        ) : (
+          <ul className="mt-5 divide-y divide-white/10 overflow-hidden rounded-md border border-white/10">
+            {patientGroups.map(({ patient, documents: patientDocuments }) => {
+              const isExpanded = expandedPatientIds.has(patient.id);
+              const panelId = `patient-records-${patient.id}`;
+              return (
+                <li key={patient.id} className="bg-slate-950/50">
+                  <button
+                    type="button"
+                    aria-expanded={isExpanded}
+                    aria-controls={panelId}
+                    onClick={() => togglePatient(patient.id)}
+                    className="flex w-full items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-white/[0.025]"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-cyan-300/10">
+                      <UserRound className="h-5 w-5 text-cyan-200" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-base font-semibold text-white">{patient.name}</span>
+                      <span className="block truncate text-sm text-slate-400">{patient.email}</span>
+                    </span>
+                    <span className="shrink-0 rounded-md bg-white/[0.05] px-2 py-1 text-xs font-semibold text-slate-300">
+                      {patientDocuments.length} {patientDocuments.length === 1 ? 'file' : 'files'}
+                    </span>
+                    <ChevronDown
+                      className={`h-5 w-5 shrink-0 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {isExpanded ? (
+                    <div id={panelId} className="border-t border-white/10 px-4 pb-4">
+                      <DocumentList
+                        documents={patientDocuments}
+                        isLoading={false}
+                        emptyMessage="This patient has not shared any files with you."
+                        selectedDocumentId={selectedDocument?.id ?? null}
+                        openingDocumentId={openingDocumentId}
+                        onOpenDocument={(documentId) => void handleOpenDocument(documentId)}
+                        onPreviewDocument={setPreviewDocument}
+                      />
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       <div className="rounded-lg border border-white/10 bg-slate-900/70 p-6">
